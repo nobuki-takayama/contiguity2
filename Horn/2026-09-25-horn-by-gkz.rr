@@ -1,0 +1,502 @@
+/*
+  2026.09.25.: contiguity/Horn/2026-03-01-horn-by-gkz.rr を修正.
+    2026-03-06-check-horn.rr (新版) で動作確認.
+  2026-02-13-F4-by-gkz.rr を一般 の A で.
+  contiguity-ja.tex は一連のファイルの解説.
+
+  2026-03-01-horn-by-gkz-v1.rr は debug 用, gemini との相談の記録も.
+
+  2026-03-06-check-horn.rr がテスト用. これを実行.
+*/
+if (which("2026-09-24-chg-by-gkz.rr")) {
+  load("2026-09-24-chg-by-gkz.rr");;
+  load("2026-08-05-contiguity.rr");;
+  import("tk_weyl.rr");;  // called by check_contiguity only
+  import("linear_poly.rr");;
+}else if (which("tk_horn_contiguity2/2026-09-24-chg-by-gkz.rr")) {
+  load("tk_horn_contiguity2/2026-09-24-chg-by-gkz.rr");
+  load("tk_horn_contiguity2/2026-08-05-contiguity.rr");;
+  import("tk_horn_contiguity2/tk_weyl.rr");;  // called by check_contiguity only
+  import("tk_horn_contiguity2/linear_poly.rr");;
+} else {
+  error("2026-09-24-chg-by-gkz.rr 2026-08-05-contiguity.rr are not found.");
+};;
+
+Xm_noX=1;;
+
+module horn_contiguity2;
+static H_A;;  // A matrix
+static H_a_rule;; // [[a1, b での表現],[a2, b での表現], ....]
+static H_b_rule;; // [[b1, a での表現],[b2, a での表現],....]
+static H_horn;;   // Horn type eq
+static H_horn_str;; // Horn type eq by string.
+static H_horn_str2;; // Horn type eq by string with *.
+static H_horn_xvar;; // variable of Horn
+static H_horn_gb;;   // GB of Horn system
+static H_gkz_xvar;;  // variable of GKZ
+static H_gkz;;       // gkz system
+static H_d;;   // A is H_d * H_n matrix
+static H_n;;
+static H_set_A_data;;  // gkz_natural_params の戻り値
+static H_beta;;  // parameter beta for GKZ.
+static H_a;;     // parameter a for Horn. ABCに対応.
+static Horn_contiguity;;
+/* static H_debug;;  // it is defined in 2026-02-28-chg-by-gkz.rr */
+
+static H_no_short_uv;;
+
+localf set_A$
+localf show_globals$
+localf my_solve_rule$
+localf reduce_horn$
+localf horn_contiguity_from_a_shift_for_debug1$ // will not used.
+localf horn_contiguity_from_a_shift$ // will not used.
+localf param_to_beta1$ 
+localf horn_contiguity$
+localf horn_contiguity_red$
+localf horn_b_ideal_sp$
+localf horn_isom_sp$
+
+
+def set_A(A) {
+/* usage: gkz_natural_params(A,B)
+  H_A(b) が入力
+  戻り値 は list
+  0: [[a1, b での表現],[a2, b での表現], ....]
+  1: [[dx1, Euler op],[dx2, Euler op], ...]
+  2: classical HG の独立変数.
+  3: 4 に対応する toric ideal の元.
+  4: [classical HG(文字列), classical HG(文字列), ....]
+  5: 2 を展開した classical HG の微分作用素のリスト.
+*/
+  H_A=A;
+  H_d=length(A); H_n=length(A[0]);
+  H_gkz_xvar=base_var_list(x,1,H_n);
+  H_beta=Beta=base_var_list(b,1,H_d);
+  H_gkz=sm1.gkz([H_A,H_beta]);
+  H_a=base_var_list(a,1,H_d);  // ABC に対応. Horn 変数.
+  T=gkz_natural_params(A,Beta);
+  H_set_A_data=T;
+  H_a_rule=T[0];
+  H_horn_xvar=T[2];
+  H_horn_str=T[4];
+  H_horn=T[5];
+  H_horn_str2=T[6];
+  H_b_rule=my_solve_rule(H_a_rule,Beta);
+
+  yang.define_ring(["partial",H_horn_xvar]);
+  DV=poly_dvar(H_horn_xvar);
+  G=H_horn;  
+  G2=map(dp_ptod,G,DV);
+  H_horn_gb=yang.buchberger(G2);  
+
+  return T;
+}
+
+def show_globals() {
+  S="";
+  S += sprintf("A matrix (H_A)=\n%a\n",matrix_list_to_matrix(H_A));  // A matrix
+  S += sprintf("A is %a * %a matrix.\n",H_d,H_n); // A is H_d * H_n matrix
+  S += sprintf("GKZ parameter (H_beta)=%a\n",H_beta);  // parameter beta for GKZ.
+  S += sprintf("GKZ x variables (H_gkz_xvar)=%a\n",H_gkz_xvar);  // variable of GKZ
+  S += sprintf("GKZ system (H_gkz)=%a\n",H_gkz);       // gkz system
+  S += sprintf("------------------------\n");
+  S += sprintf("Horn system (H_horn_str)=\n");
+  for (I=0; I<length(H_horn_str); I++) {
+    S += sprintf(" %a\n",H_horn_str[I]);
+  }
+  S += sprintf("Horn sytem is stored in H_horn\n");   // Horn type eq
+  S += sprintf("Horn sytem xvar(H_horn_xvar) = %a\n",H_horn_xvar); // variable of Horn
+  S += sprintf("Horn system parameter (H_a) = %a\n",H_a);     // parameter a for Horn. ABCに対応.
+  S += sprintf("a parameter expressed by beta (H_a_rule)=%a\n",H_a_rule); // [[a1, b での表現],[a2, b での表現], ....]
+  S += sprintf("beta parameter expressed by a (H_b_rule)=%a\n",H_b_rule); // [[b1, a での表現],[b2, a での表現],....]
+  S += sprintf("Other globals:\n");
+  S += sprintf("   H_horn_str2=%a\n",H_horn_str2);
+  S += sprintf("   H_set_A_data = gkz_natural_params return value\n");
+  S += sprintf("   H_horn_gb (GB of Horn)\n");
+  S += sprintf("   Horn_contiguity\n");
+  S += sprintf("------------------------------\n");
+  return S;
+}
+
+/*
+  Beta は変数のリスト.
+  Rule は [[a1,Beta変数のlinearな式1],[a2,Beta変数のlinearな式2], ...]
+  このとき Rule と Beta を与えて
+  a1-(Beta変数のlinearな式1)=0, a2-(Beta変数のlinearな式2), ... を解く関数 solve_rule(Rule,Beta)を作れ.
+  なお一次方程式系は
+  poly_solve_linear(一次方程式のリスト,Beta) 
+  で解くことができる. --> gemini
+*/
+def my_solve_rule(Rule, Beta) {
+    Eqs = [];
+    for (I = 0; I < length(Rule); I++) {
+        /* Rule[I][0] = a_i, Rule[I][1] = expr_i */
+        /* a_i - expr_i = 0 の形にするため多項式の減算を行う */
+        Eqs = cons(Rule[I][0] - Rule[I][1], Eqs);
+    }
+    /* consで先頭に追加していったため、リストの順序を元に戻す */
+    Eqs = reverse(Eqs);
+    
+    /* 連立一次方程式を解く */
+    Ans = poly_solve_linear(Eqs, Beta);
+    
+    return Ans;
+}
+
+//T=set_A([[1,1,1,1],[0,1,0,1],[0,0,1,1]]);
+/*
+T=set_A([[1,0,0,-1],[0,1,0,1],[0,0,1,1]]);
+printf("H_b_rule=%a\n",H_b_rule);;
+*/
+
+
+def reduce_horn(F,ABC) {
+  yang.define_ring(["partial",H_horn_xvar]);//これがないと dp_ord が正しく設定されない. 2026.03.07
+  G2=H_horn_gb; DV=poly_dvar(H_horn_xvar);
+  G2=base_replace(G2,assoc(H_a,ABC)); //ABC_shift_s (start) parameter で reduction の必要あり.
+  Fd=dn(F); F=nm(F);
+  F4=yang.reduction(dp_ptod(F,DV),G2);
+  return red(dp_dtop(F4[0],DV)/(F4[1]*Fd));
+}
+
+/*
+T300=horn_contiguity_by_GKZ0([[0,0,0,0],[0,0,1,0]]);
+T301=horn_contiguity_by_GKZ0([[1,0,0,0],[0,0,0,0]]);
+T302=horn_contiguity_by_GKZ0([[0,0,0,0],[1,0,0,0]]);
+*/
+//show_globals();;
+
+def horn_contiguity_from_a_shift_for_debug1(A_start, A_end) {
+//def horn_contiguity_from_a_shift(A_start, A_end) {
+    if (H_A == 0) error("set_A(A) is not executed.");
+    
+    Rule_start = assoc(H_a, A_start);
+    Rule_end   = assoc(H_a, A_end);
+    
+    Beta_start = []; Beta_end = [];
+    for (I = 0; I < length(H_b_rule); I++) {
+        Beta_start = cons(base_replace(H_b_rule[I][1], Rule_start), Beta_start);
+        Beta_end   = cons(base_replace(H_b_rule[I][1], Rule_end), Beta_end);
+    }
+    Beta_start = reverse(Beta_start); Beta_end = reverse(Beta_end);
+    
+    W_vars = base_var_list(w, 1, H_n);
+    Eqs = [];
+    for (I = 0; I < H_d; I++) {
+        Eq = 0;
+        for (J = 0; J < H_n; J++) {
+            Eq = Eq + H_A[I][J] * W_vars[J];
+        }
+        Eqs = cons(Eq - (Beta_end[I] - Beta_start[I]), Eqs);
+    }
+    Eqs = reverse(Eqs);
+    
+    Ans = poly_solve_linear(Eqs, W_vars);
+    if (Ans == []) error("W が見つかりません。");
+    
+    Subst_rule = assoc(W_vars, vtol(newvect(length(W_vars))));
+    W_vals = [];
+    for (I = 0; I < length(W_vars); I++) {
+        Found = 0;
+        for (J = 0; J < length(Ans); J++) {
+            if (Ans[J][0] == W_vars[I]) {
+                W_vals = cons(base_replace(Ans[J][1], Subst_rule), W_vals);
+                Found = 1; break;
+            }
+        }
+        if (Found == 0) W_vals = cons(0, W_vals);
+    }
+    W_vals = reverse(W_vals);
+    
+    U = []; V = [];
+    for (I = 0; I < length(W_vals); I++) {
+        if (W_vals[I] > 0) {
+            U = cons(W_vals[I], U); V = cons(0, V);
+        } else {
+            U = cons(0, U); V = cons(-W_vals[I], V);
+        }
+    }
+    U = reverse(U); V = reverse(V);
+    UV = [U, V];
+
+    Base_Beta = [];
+    for (I = 0; I < H_d; I++) {
+        Sum = 0;
+        for (J = 0; J < H_n; J++) { Sum = Sum + H_A[I][J] * U[J]; }
+        Base_Beta = cons(Beta_start[I] + Sum, Base_Beta);
+    }
+    Base_Beta = reverse(Base_Beta);
+
+    /* --- デバッグダンプ 1 --- */
+    printf("\n=== DEBUG INFO 1: ベクトルの逆算 ===\n");
+    printf("Beta_start = %a\n", Beta_start);
+    printf("Beta_end   = %a\n", Beta_end);
+    printf("W_vals     = %a\n", W_vals);
+    printf("U = %a\n", U);
+    printf("V = %a\n", V);
+    printf("Base_Beta  = %a\n", Base_Beta);
+    printf("====================================\n\n");
+
+    XL = H_gkz_xvar; Dx = poly_dvar(XL); A = H_A;
+    Cont = uv_contiguity(UV, A, Base_Beta);
+    B_dxv = Cont[0]; E = Cont[1];
+
+    /* --- デバッグダンプ 2 --- */
+    printf("=== DEBUG INFO 2: uv_contiguity の結果 ===\n");
+    printf("E     = %a\n", E);
+    printf("B_dxv = %a\n", B_dxv);
+    printf("Bf (b(beta)) = %a\n", red(B_dxv/v2mon(Dx,UV[1])));
+    printf("==========================================\n\n");
+    
+    Removed_var = base_set_minus(H_gkz_xvar, H_horn_xvar);
+    E2 = base_replace(E, at_one_rule(Removed_var));
+    Witness = newvect(length(A));
+    E2_elim = lr_red(E2, A, XL, Beta_start, Witness);
+
+    /* --- デバッグダンプ 3 --- */
+    printf("=== DEBUG INFO 3: lr_red の結果 ===\n");
+    printf("E2_elim = %a\n", E2_elim);
+    printf("===================================\n\n");
+    
+    if (!(type(getopt(reduce)) > 0)) {
+        return [E2_elim, red(B_dxv/v2mon(Dx,UV[1])), [A_start, " -> ", A_end], [E, B_dxv, v2mon(Dx,UV[0]), v2mon(Dx,UV[1])]];
+    } else {
+        return [reduce_horn(E2_elim, A_start), red(B_dxv/v2mon(Dx,UV[1])), [A_start, " -> ", A_end], [E, B_dxv, v2mon(Dx,UV[0]), v2mon(Dx,UV[1])]];
+    }
+}
+
+/*
+ Default は weyl algebra での contiguity.
+ option: reduce                 reduce_horn をする (rational weyl algebra)
+ option: no_reduce_common_factor   gcd(contiguity, bf) で割らない. reduce_horn する.
+*/
+def horn_contiguity_from_a_shift(A_start, A_end) {
+//def horn_contiguity_from_a_shift_new(A_start, A_end) {
+    if (H_A == 0) error("set_A(A) is not executed.");
+    
+    Rule_start = assoc(H_a, A_start);
+    Rule_end   = assoc(H_a, A_end);
+    
+    Beta_start = []; Beta_end = [];
+    for (I = 0; I < length(H_b_rule); I++) {
+        Beta_start = cons(base_replace(H_b_rule[I][1], Rule_start), Beta_start);
+        Beta_end   = cons(base_replace(H_b_rule[I][1], Rule_end), Beta_end);
+    }
+    Beta_start = reverse(Beta_start); Beta_end = reverse(Beta_end);
+    
+    Dbeta = newvect(H_d);
+    for (I = 0; I < H_d; I++) {
+        Dbeta[I] = Beta_end[I] - Beta_start[I];
+    }
+    
+    /* --- 新規追加: 最短のシフトベクトル U, V を探索する --- */
+    Found_UV = 0;
+    Best_U = newvect(H_n);
+    Best_V = newvect(H_n);
+    
+    /* 1. 長さ 1 のシフトを探索 ( U=e_j または V=e_j ) */
+    for (J = 0; J < H_n; J++) {
+        Col = newvect(H_d);
+        for (I = 0; I < H_d; I++) Col[I] = H_A[I][J];
+        
+        Diff1 = 0; Diff2 = 0;
+        for (I = 0; I < H_d; I++) {
+            if (Col[I] != Dbeta[I]) Diff1 = 1;
+            if (-Col[I] != Dbeta[I]) Diff2 = 1;
+        }
+        if (Diff1 == 0) { Best_U[J] = 1; Found_UV = 1; break; }
+        if (Diff2 == 0) { Best_V[J] = 1; Found_UV = 1; break; }
+    }
+    
+    /* 2. 見つからなければ、長さ 2 のシフトを探索 */
+    if (Found_UV == 0) {
+        for (J = 0; J < H_n; J++) {
+            for (K = 0; K < H_n; K++) {
+                ColJ = newvect(H_d); ColK = newvect(H_d);
+                for (I = 0; I < H_d; I++) { ColJ[I] = H_A[I][J]; ColK[I] = H_A[I][K]; }
+                
+                Diff1 = 0; Diff2 = 0; Diff3 = 0;
+                for (I = 0; I < H_d; I++) {
+                    if (ColJ[I] + ColK[I] != Dbeta[I]) Diff1 = 1;
+                    if (-ColJ[I] - ColK[I] != Dbeta[I]) Diff2 = 1;
+                    if (ColJ[I] - ColK[I] != Dbeta[I]) Diff3 = 1;
+                }
+                if (Diff1 == 0) { Best_U[J]++; Best_U[K]++; Found_UV = 1; break; }
+                if (Diff2 == 0) { Best_V[J]++; Best_V[K]++; Found_UV = 1; break; }
+                if (Diff3 == 0) { Best_U[J]++; Best_V[K]++; Found_UV = 1; break; }
+            }
+            if (Found_UV == 1) break;
+        }
+    }
+    
+    /* 3. それでもダメなら poly_solve_linear (フォールバック) */
+    if (H_no_short_uv) Found_UV=0;
+    if (Found_UV == 1) {
+        U = vtol(Best_U); V = vtol(Best_V);
+    } else {
+        W_vars = base_var_list(w, 1, H_n);
+        Eqs = [];
+        for (I = 0; I < H_d; I++) {
+            Eq = 0;
+            for (J = 0; J < H_n; J++) Eq = Eq + H_A[I][J] * W_vars[J];
+            Eqs = cons(Eq - Dbeta[I], Eqs);
+        }
+        Eqs = reverse(Eqs);
+        Ans = poly_solve_linear(Eqs, W_vars);
+        if (Ans == []) error("対応する GKZ のシフトベクトルが見つかりません。");
+        
+        Subst_rule = assoc(W_vars, vtol(newvect(length(W_vars))));
+        W_vals = [];
+        for (I = 0; I < length(W_vars); I++) {
+            Found = 0;
+            for (J = 0; J < length(Ans); J++) {
+                if (Ans[J][0] == W_vars[I]) {
+                    W_vals = cons(base_replace(Ans[J][1], Subst_rule), W_vals);
+                    Found = 1; break;
+                }
+            }
+            if (Found == 0) W_vals = cons(0, W_vals);
+        }
+        W_vals = reverse(W_vals);
+        U = []; V = [];
+        for (I = 0; I < length(W_vals); I++) {
+            if (W_vals[I] > 0) { U = cons(W_vals[I], U); V = cons(0, V); }
+            else { U = cons(0, U); V = cons(-W_vals[I], V); }
+        }
+        U = reverse(U); V = reverse(V);
+    }
+    
+    UV = [U, V];
+
+    /* 4. 以下既存の処理 */
+    Base_Beta = [];
+    for (I = 0; I < H_d; I++) {
+        Sum = 0;
+        for (J = 0; J < H_n; J++) Sum = Sum + H_A[I][J] * U[J];
+        Base_Beta = cons(Beta_start[I] + Sum, Base_Beta);
+    }
+    Base_Beta = reverse(Base_Beta);
+
+    XL = H_gkz_xvar; Dx = poly_dvar(XL); A = H_A;
+    Cont = uv_contiguity(UV, A, Base_Beta);
+    B_dxv = Cont[0]; E = Cont[1];
+    
+    Removed_var = base_set_minus(H_gkz_xvar, H_horn_xvar);
+    E2 = base_replace(E, at_one_rule(Removed_var));
+    Witness = newvect(length(A));
+    E2_elim = lr_red(E2, A, XL, Beta_start, Witness);
+    
+    if (!(type(getopt(reduce)) > 0)) {
+        return [E2_elim, red(B_dxv/v2mon(Dx,UV[1])), [A_start, " -> ", A_end], [E, B_dxv, v2mon(Dx,UV[0]), v2mon(Dx,UV[1])],1];
+    } else if (type(getopt(no_reduce_common_factor))>0) {
+        return [reduce_horn(E2_elim, A_start), red(B_dxv/v2mon(Dx,UV[1])), [A_start, " -> ", A_end], [E, B_dxv, v2mon(Dx,UV[0]), v2mon(Dx,UV[1])],1];
+    } else {
+        C0=reduce_horn(E2_elim, A_start);
+        B0=red(B_dxv/v2mon(Dx,UV[1]));
+        Common_factor=gcd(nm(C0),B0);
+        return [red(C0/Common_factor),red(B0/Common_factor), [A_start, " -> ", A_end], [E, B_dxv, v2mon(Dx,UV[0]), v2mon(Dx,UV[1])],Common_factor];
+    }
+}
+
+// 2026.09.25 
+def param_to_beta1(Param) {
+  Rule_start = assoc(H_a, Param);
+    
+  Beta_start = [];
+  for (I = 0; I < length(H_b_rule); I++) {
+    Beta_start = cons(base_replace(H_b_rule[I][1], Rule_start), Beta_start);
+  }
+  Beta_start = reverse(Beta_start); 
+  return Beta_start;
+}
+def horn_contiguity(A_start, A_end) {
+  if (H_A == 0) error("set_A(A) is not executed.");
+    
+  Beta_start = param_to_beta1(A_start);
+  Beta_end = param_to_beta1(A_end);
+
+  /* 2026-08-28-f0134.rr を参考に */
+  A=matrix_matrix_to_list(H_A);
+  Beta_target=Beta_end;
+  Amat=matrix_list_to_matrix(A);
+  Chi=vtol(ltov(Beta_target)-ltov(Beta_start));
+  UV=tk_chi_to_uv(A,Chi);
+  printf("UV=%a\n",UV);
+  Base_Beta=ltov(Beta_start)+Amat*ltov(UV[0]);
+  Base_Beta=vtol(Base_Beta);
+  T0=tk_uv_contiguity(UV,A,Base_Beta | option_list=getopt());
+  printf("horn_contiguity2: T0=%a, tk_uv_contiguity(UV=%a,A=%a,Base_Beta=%a);\n",T0,UV,A,Base_Beta);
+
+  if (type(getopt(b_ideal))>0) {
+    printf("b_ideal option is on.\n");
+    return map(horn_contiguity_red,T0,A,Base_Beta,Beta_start,Beta_target,UV);
+  }else{
+    return horn_contiguity_red(T0,A,Base_Beta,Beta_start,Beta_target,UV);
+  }
+}
+
+def horn_contiguity_red(Cont,A,Base_Beta,Beta_start,Beta_target,UV) {
+  XL = base_var_list(x,1,length(A[0])); Dx = poly_dvar(XL); 
+  if (Cont==0) {
+    printf("Warning! No contiguity is found. Return 0.\n");
+    return 0;
+  }else{ }
+  B_dxv = Cont[0]; E = Cont[1];
+  printf("B_dxv=%a\n",fctr(B_dxv));
+
+  Remaining_var=base_var_list(x,length(A)+1,length(A[0]));    
+  Removed_var = base_set_minus(XL, Remaining_var); // change here
+  E2 = base_replace(E, at_one_rule(Removed_var));
+  Witness = newvect(length(A));
+  E2_elim = lr_red(E2, A, XL, Beta_start, Witness);
+
+  /*  todo
+  printf("checking the result...\n");
+  check_contiguity2_horn(E2_elim,Beta_target,Beta_start | prob=1);
+  printf("... Done\n");
+  */
+    
+  return [E2_elim, red(B_dxv/v2mon(Dx,UV[1])), [Beta_start, " -> ", Beta_target], [E, B_dxv, v2mon(Dx,UV[0]), v2mon(Dx,UV[1])],1];
+}
+
+// return [b-ideal, Old->New contiguity str not restricted]
+def horn_b_ideal_sp(Old,New) {
+  A = matrix_matrix_to_list(H_A);
+  Amat=matrix_list_to_matrix(A);
+  Beta_start=param_to_beta1(Old);  // change here
+  Beta_target=param_to_beta1(New); // change here
+  Chi=vtol(ltov(Beta_target)-ltov(Beta_start));
+  UV=tk_chi_to_uv(A,Chi);
+  printf("Chi=%a, UV=%a\n",Chi,UV);
+  Base_Beta=ltov(Beta_start)+Amat*ltov(UV[0]);
+  Base_Beta=vtol(Base_Beta);
+  T0=tk_uv_contiguity(UV,A,Base_Beta | b_ideal=1);  // change here
+  printf("T0=%a, tk_uv_contiguity(%a,%a,%a);\n",T0,UV,A,Base_Beta);
+  printf("length(T0)=%a > 1 ?\n",length(T0));
+  Dxv=tk_v_to_monomial(base_var_list(dx,1,length(A[0])),UV[1]); // これが必要.
+  B=[];
+  for (I=0; I<length(T0); I++) {
+    B=cons(red(T0[I][0]/Dxv),B); // change here
+  }
+  return [reverse(B),T0]; //change here
+}
+// return [b-ideal, Old->New contiguity str not restricted, New->Old contiguity str not restricted]
+def horn_isom_sp(Old,New) {
+  B1=horn_b_ideal_sp(Old,New); // change here
+  B2=horn_b_ideal_sp(New,Old); // change here
+  Id1=B1[0]; Id2=B2[0];
+  Id=[];   // Id1 \cap Id2, V(Id1) \cup V(Id2)
+  for (I=0; I<length(Id1); I++) {
+    for (J=0; J<length(Id2); J++) {
+      F=Id1[I]*Id2[J];
+      if (F != 0) Id=cons(F,Id);
+    }
+  }
+  return [reverse(Id),B1[1],B2[1]];
+}
+
+
+endmodule;;
+
+end;;

@@ -1,0 +1,127 @@
+/*  2026.08.06 by gemini
+  Weyl 代数対応 真の正規形計算関数 (カスタム版)
+  インターフェース: tk_p_weyl_true_nf(Poly, GB, Vd, Ord)
+  戻り値: [分子(recursive polynomial), 分母]
+*/
+
+import("names.rr");;
+
+def tk_p_weyl_true_nf(Poly, GB, Vd, Ord) {
+    local Ord_orig, P_dp, GB_dp, I, J, Den, Rem_dp;
+    local C_p, E_p, Reduced, G, C_g, E_g, E_diff, Divisible, M, MG;
+    local Num, F_red;
+
+    // 順序の保存と適用
+    Ord_orig = dp_ord();
+    dp_ord(Ord);
+
+    // 自明な 0 の場合は直ちにリターン
+    if (Poly == 0) {
+        dp_ord(Ord_orig);
+        return [0, 1];
+    }
+
+    P_dp = dp_ptod(Poly, Vd);
+    
+    // 基底から 0 を除外して分散多項式化
+    GB_dp = [];
+    for (I = 0; I < length(GB); I++) {
+        if (GB[I] != 0) {
+            GB_dp = append(GB_dp, [dp_ptod(GB[I], Vd)]);
+        }
+    }
+
+    // 分母の初期値と、簡約できず退避する余り
+    Den = 1;
+    Rem_dp = 0;
+
+    // 擬除算 (Pseudo-Division) のメインループ
+    while (P_dp != 0) {
+        C_p = dp_hc(P_dp);
+        E_p = dp_etov(dp_ht(P_dp));
+        Reduced = 0;
+
+        for (I = 0; I < length(GB_dp); I++) {
+            G = GB_dp[I];
+            C_g = dp_hc(G);
+            E_g = dp_etov(dp_ht(G));
+
+            // 頭項が割り切れるか (指数ベクトル成分の比較)
+            Divisible = 1;
+            E_diff = newvect(length(E_p));
+            for (J = 0; J < length(E_p); J++) {
+                E_diff[J] = E_p[J] - E_g[J];
+                if (E_diff[J] < 0) {
+                    Divisible = 0;
+                    break;
+                }
+            }
+
+            if (Divisible == 1) {
+                // 単項式 M の作成 (係数1の分散多項式化)
+                M = 1 * dp_vtoe(E_diff);
+                
+                // Weyl代数での非可換積: M * G
+                MG = dp_weyl_mul(M, G);
+                
+                // 分母を払うための交差乗算 (擬除算)
+                // C_g * P_dp - C_p * M * G により頭項を消去
+                P_dp = C_g * P_dp - C_p * MG;
+                Rem_dp = C_g * Rem_dp; // 過去の余りにも C_g を掛ける
+                Den = C_g * Den;       // 分母の追跡
+                
+                Reduced = 1;
+                break;
+            }
+        }
+
+        // 頭項がどの基底でも簡約できなかった場合、Rem_dpに退避して次へ
+        if (Reduced == 0) {
+            Rem_dp = Rem_dp + C_p * dp_vtoe(E_p);
+            P_dp = dp_rest(P_dp);
+        }
+    }
+
+    // 通常の多項式 (recursive polynomial) に戻す
+    Num = dp_dtop(Rem_dp, Vd);
+    
+    if (Num == 0) {
+        dp_ord(Ord_orig);
+        return [0, 1];
+    }
+
+    // 有理式として約分し、最も簡素な形にする
+    F_red = red(Num / Den);
+    Num = nm(F_red);
+    Den = dn(F_red);
+
+    dp_ord(Ord_orig);
+    return [Num, Den];
+}
+
+// 動作確認用テスト
+def tk_test_p_weyl_true_nf() {
+    local Vd, GB, Poly, Res_weyl;
+    
+    // テスト用の Weyl代数 [x, dx]
+    Vd = [x, dx];
+    
+    // 基底: x * dx - 1
+    GB = [x * dx - 1];
+    
+    // dx * x は Weyl代数で x*dx + 1
+    Poly = poly_dmul(dx, x, [x]);
+    
+    printf("--- Custom p_weyl_true_nf Test ---\n");
+    printf("Target Polynomial: %a\n", Poly);
+    printf("Groebner Basis: %a\n", GB);
+    
+    Res_weyl = tk_p_weyl_true_nf(Poly, GB, Vd, 0);
+    
+    // (x*dx + 1) / (x*dx - 1) の余りは 2 (分母 1) になるはずです
+    printf("Result [Num, Den]: [%a, %a]\n", Res_weyl[0], Res_weyl[1]);
+}
+
+//tk_test_p_weyl_true_nf();;
+
+end;;

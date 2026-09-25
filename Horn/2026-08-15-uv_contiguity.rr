@@ -1,0 +1,1108 @@
+import("tk_weyl.rr");;
+//import("2026-08-05-contiguity.rr");; //Used only for compare with uv_contiguity
+extern Tk_UV_Bf_E;;   // s での Bf と symmetry algebra
+extern Tk_UV_B_ideal;; // b-ideal
+extern Tk_UV_ord_42;; // alg 4.2 の order 実験的.
+
+extern Contiguity_verbose;;  // 2026-08-05-contiguity.rr で定義.
+
+def set_ord_42(Ord) {
+  printf("Order for algorithm 4.2 (Tk_UV_ord_42) is set to %a\n",Ord);
+  printf("Warning! This function is no longer used.\n");
+  Tk_UV_ord_42=Ord;
+}
+set_ord_42(0);;
+/*ChangeLog
+  2026-08-17, 2026-08-11-symalg.rr の lex order の変更を反映.
+
+  2026-08-11-b-ideal.rr
+  2026-08-11-symalg.rr
+  2026-08-14-monomial-part.rr
+  をまとめて 
+  ----------------------------------
+  tk_uv_contiguity(UV,A,Beta)
+  Return [Bf*dx^V, E, Xvars]
+   where  E*dx^U - Bf*dx^V = 0, modulo H_A(Beta)
+  ----------------------------------
+  を作る.  Saito (2001) のアルゴリズムの実装.
+
+  2026-08-05-contiguity.rr の uv_contiguity の置き換えを目指す.
+  Example:
+ uv_contiguity([[1,0,0],[0,0,0]],[[1,1,1],[0,1,2]],[b1,b2]);
+   uv_contiguity(UV=[[1,0,0],[0,0,0]],A,Beta)
+   A=[[1,1,1],[0,1,2]], Beta=[b1,b2]
+   [1,1,1,1,1,1]
+   G[10]=[4*b1^2+(-4*b2-2)*b1+b2^2+b2,(-4*x1*x3+x2^2)*dx3+(4*b1-2)*x1,4*x3*dx3-4*b1+2,-2*x3*dx3-x2*dx2+4*b1-b2-1,x2^2]
+   check_uv_contiguity(Cont,Dxu,Id,Xvar): Cont[1]*Dxu-Cont[0] = 0 mod Id?
+    Cont=[4*b1^2+(-4*b2-2)*b1+b2^2+b2,(-4*x1*x3+x2^2)*dx3+(4*b1-2)*x1],Dxu=dx1,Id=[x3*dx3+x2*dx2+x1*dx1-b1,2*x3*dx3+x2*dx2-b2,-dx1*dx3+dx2^2],Xvar=[x1,x2,x3]
+    check_uv_contiguity: OK.
+
+  Return: [4*b1^2+(-4*b2-2)*b1+b2^2+b2,(-4*x1*x3+x2^2)*dx3+(4*b1-2)*x1,x1,x2,x3]
+
+  -----------------------
+  tk_chi_to_uv(A,Chi);
+  Return: [U,V]a
+    A*(U-V)=Chi
+  -----------------------
+*/
+
+////2026-08-14-monomial-part.rr より.
+
+/* 2026-08-10-monomial-part.rr の一般化版.
+//Ref: 2026-08-03-banana-contiguity.goodnotes の 8/14
+*/
+
+/*
+  一般の \chi = AU - AV に対する M_\chi の完全な計算アルゴリズム
+  (二項式関係を用いたモノミアル・コアの反復抽出)
+  再帰多項式と分散多項式の厳格な区別対応版
+*/
+
+// --- 補助関数: 指数ベクトルから単項式を生成 ---
+def tk_vec_to_monomial(Vec, Vdx) {
+    local Res, I;
+    Res = 1;
+    for (I = 0; I < length(Vec); I++) {
+        if (Vec[I] > 0) {
+            Res = Res * Vdx[I]^Vec[I];
+        }
+    }
+    return Res;
+}
+
+// --- 補助関数: 二項式から2つの項 (T1, T2) を純粋な再帰多項式として取り出す ---
+def tk_get_terms_of_binomial(Poly, Vlist) {
+    local Dp_poly, T1_dp, T2_dp, T1, T2;
+    if (Poly == 0) return [0, 0];
+    
+    Dp_poly = dp_ptod(Poly, Vlist);
+    if (Dp_poly == 0) return [0, 0];
+    
+    T1_dp = dp_vtoe(dp_etov(dp_ht(Dp_poly)));
+    T1 = dp_dtop(T1_dp, Vlist); // 確実に再帰多項式に戻す
+    
+    Dp_poly = dp_rest(Dp_poly);
+    if (Dp_poly == 0) return [T1, 0];
+    
+    T2_dp = dp_vtoe(dp_etov(dp_ht(Dp_poly)));
+    T2 = dp_dtop(T2_dp, Vlist); // 確実に再帰多項式に戻す
+    
+    return [T1, T2];
+}
+
+// --- 補助関数: M1 / gcd(M1, M2) を正確に計算 (指数の引き算) ---
+// 入力・出力ともに再帰多項式
+def tk_monomial_div_gcd(M1, M2, Vlist) {
+    local Dp1, Dp2, E1, E2, Res, I;
+    if (M1 == 0 || M2 == 0) return 0;
+    
+    Dp1 = dp_ptod(M1, Vlist);
+    Dp2 = dp_ptod(M2, Vlist);
+    if (Dp1 == 0 || Dp2 == 0) return 0;
+    
+    E1 = dp_etov(dp_ht(Dp1));
+    E2 = dp_etov(dp_ht(Dp2));
+    
+    Res = 1;
+    for (I = 0; I < length(E1); I++) {
+        if (E1[I] > E2[I]) {
+            Res = Res * Vlist[I]^(E1[I] - E2[I]);
+        }
+    }
+    return Res;
+}
+
+// --- 補助関数: 単項式 M が リスト M_list のいずれかで割り切れるか判定 ---
+def tk_is_divisible_by_any(M, M_list, Vlist) {
+    local Dp_m, Dp_l, E_m, E_l, I, J, Divides;
+    if (M == 0) return 1; // 0 は何でも割り切れるとみなして除外
+    
+    Dp_m = dp_ptod(M, Vlist);
+    if (Dp_m == 0) return 1;
+    E_m = dp_etov(dp_ht(Dp_m));
+    
+    for (I = 0; I < length(M_list); I++) {
+        if (M_list[I] == 0) continue;
+        Dp_l = dp_ptod(M_list[I], Vlist);
+        if (Dp_l == 0) continue;
+        
+        E_l = dp_etov(dp_ht(Dp_l));
+        Divides = 1;
+        for (J = 0; J < length(E_m); J++) {
+            if (E_l[J] > E_m[J]) {
+                Divides = 0;
+                break;
+            }
+        }
+        if (Divides == 1) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// --- 補助関数: 単項式イデアルの極小生成系への簡約 ---
+def tk_minimize_monomial_ideal(M_gens, Vlist) {
+    local Res, I, J, Is_divisible, Dp_i, Dp_j, E_i, E_j, Divides, Cmp, K;
+    Res = [];
+    for (I = 0; I < length(M_gens); I++) {
+        if (M_gens[I] == 0) continue;
+        Dp_i = dp_ptod(M_gens[I], Vlist);
+        if (Dp_i == 0) continue;
+        E_i = dp_etov(dp_ht(Dp_i));
+        
+        Is_divisible = 0;
+        for (J = 0; J < length(M_gens); J++) {
+            if (I == J || M_gens[J] == 0) continue;
+            Dp_j = dp_ptod(M_gens[J], Vlist);
+            if (Dp_j == 0) continue;
+            E_j = dp_etov(dp_ht(Dp_j));
+            
+            Divides = 1;
+            Cmp = 0;
+            for (K = 0; K < length(E_i); K++) {
+                if (E_j[K] > E_i[K]) {
+                    Divides = 0;
+                    break;
+                }
+                if (E_j[K] < E_i[K]) {
+                    Cmp = 1;
+                }
+            }
+            if (Divides == 1) {
+                if (Cmp == 1) {
+                    Is_divisible = 1; break;
+                } else {
+                    if (I > J) {
+                        Is_divisible = 1; break;
+                    }
+                }
+            }
+        }
+        if (Is_divisible == 0) {
+            Res = cons(M_gens[I], Res);
+        }
+    }
+    return reverse(Res);
+}
+
+// =====================================================================
+// メイン関数: 一般の \chi に対する M_\chi の完全計算 (反復アルゴリズム)
+// 入力: I_A (トーリックイデアル), U_vec (\chi_+), V_vec (\chi_-)
+// =====================================================================
+def tk_compute_M_chi_general(I_A, U_vec, V_vec, Vdx) {
+    local Gb_A, B_list, I, Terms, Dx_u, Dx_v, M_list, Changed, M_next;
+    local M, J, B, T1, T2, M_new1, M_new2, Ans;
+    
+    // 1. I_A のグレブナー基底から二項式の関係をすべて抽出
+    Gb_A = nd_gr(I_A, Vdx, 0, 0);
+    B_list = [];
+    for (I = 0; I < length(Gb_A); I++) {
+        Terms = tk_get_terms_of_binomial(Gb_A[I], Vdx);
+        if (Terms[1] != 0) {
+            B_list = cons(Terms, B_list);
+        }
+    }
+    
+    Dx_u = tk_vec_to_monomial(U_vec, Vdx);
+    Dx_v = tk_vec_to_monomial(V_vec, Vdx);
+    
+    // 2. モノミアル・コアの反復抽出 (イテレーション)
+    M_list = [ Dx_u ];
+    Changed = 1;
+    while (Changed == 1) {
+        Changed = 0;
+        M_next = M_list;
+        for (I = 0; I < length(M_list); I++) {
+            M = M_list[I];
+            if (M == 0) continue;
+            for (J = 0; J < length(B_list); J++) {
+                B = B_list[J];
+                T1 = B[0];
+                T2 = B[1];
+                
+                // M と T1 の関係から新しい単項式 M_new1 を生成
+                if (T1 != 0) {
+                    M_new1 = T2 * tk_monomial_div_gcd(M, T1, Vdx);
+                    if (M_new1 != 0 && tk_is_divisible_by_any(M_new1, M_next, Vdx) == 0) {
+                        M_next = cons(M_new1, M_next);
+                        M_next = tk_minimize_monomial_ideal(M_next, Vdx);
+                        Changed = 1;
+                    }
+                }
+                
+                // M と T2 の関係から新しい単項式 M_new2 を生成
+                if (T2 != 0) {
+                    M_new2 = T1 * tk_monomial_div_gcd(M, T2, Vdx);
+                    if (M_new2 != 0 && tk_is_divisible_by_any(M_new2, M_next, Vdx) == 0) {
+                        M_next = cons(M_new2, M_next);
+                        M_next = tk_minimize_monomial_ideal(M_next, Vdx);
+                        Changed = 1;
+                    }
+                }
+            }
+        }
+        M_list = M_next;
+    }
+    
+    // 3. 抽出された全単項式を \partial^V でイデアル商をとる
+    Ans = [];
+    for (I = 0; I < length(M_list); I++) {
+        Ans = cons(tk_monomial_div_gcd(M_list[I], Dx_v, Vdx), Ans);
+    }
+    
+    // 4. 最終的な極小生成系にして返す
+    return tk_minimize_monomial_ideal(Ans, Vdx);
+}
+
+////2026-08-11-b-ideal.rr より
+/*
+  b-ideal B_\chi を計算するアルゴリズム (Proposition 4.3 + 消去法)
+*/
+
+// --- 補助関数: モノミアル \partial^u から Distraction を計算する ---
+def tk_compute_distraction_poly(Monomial, Vdx, Vtheta) {
+    local Dp_mon, E_vec, Res, I, K;
+    
+    Dp_mon = dp_ptod(Monomial, Vdx);
+    E_vec = dp_etov(dp_ht(Dp_mon));
+    Res = 1;
+    
+    for (I = 0; I < length(E_vec); I++) {
+        if (E_vec[I] > 0) {
+            // \theta_I * (\theta_I - 1) * ... * (\theta_I - u_I + 1)
+            for (K = 0; K < E_vec[I]; K++) {
+                Res = Res * (Vtheta[I] - K);
+            }
+        }
+    }
+    return Res;
+}
+
+// --- メイン関数: B_\chi の生成元を計算する ---
+// 入力: M_chi_gens (M_\chi の生成元のリスト), A_mat (GKZ行列)
+// Vdx (\partial 変数), Vtheta (\theta 変数), Vs (s 変数)
+def tk_compute_B_chi(M_chi_gens, A_mat, Vdx, Vtheta, Vs) {
+    local I, J, N_vars, D_vars, J_ideal, Dist_poly, Def_s, Gb, B_chi, Poly, Has_theta, Pos;
+    local V_all;
+
+    N_vars = length(Vdx);
+    D_vars = length(Vs);
+    J_ideal = [];
+
+    // 1. M_\chi の Distraction を計算してイデアルに追加
+    for (I = 0; I < length(M_chi_gens); I++) {
+        Dist_poly = tk_compute_distraction_poly(M_chi_gens[I], Vdx, Vtheta);
+        J_ideal = cons(Dist_poly, J_ideal);
+    }
+
+    // 2. s_i = \sum a_{ij} \theta_j の定義式をイデアルに追加
+    for (I = 0; I < D_vars; I++) {
+        Def_s = Vs[I];
+        for (J = 0; J < N_vars; J++) {
+            Def_s = Def_s - A_mat[I][J] * Vtheta[J];
+        }
+        J_ideal = cons(Def_s, J_ideal);
+    }
+    J_ideal = reverse(J_ideal);
+
+    // 3. \theta を消去するための変数リスト ( \theta \succ s )
+    V_all = append(Vtheta, Vs);
+
+    // 4. 純粋な可換イデアルとして、Lexicographic order (順序指定 2) でグレブナー基底を計算
+    printf("Computing Groebner basis for elimination (lex order)...\n");
+    Gb = nd_gr(J_ideal, V_all, 0, 2);
+
+    // 5. Gb の中から \theta を含まない多項式 (s のみの多項式) を抽出
+    B_chi = [];
+    for (I = 0; I < length(Gb); I++) {
+        Poly = Gb[I];
+	//printf("Gb[%a]=%a\n",I,Gb[I]);
+        Has_theta = 0;
+        for (J = 0; J < N_vars; J++) {
+            //printf("Vtheta[J]=%a, vars(Poly)=%a\n",Vtheta[J],vars(Poly));
+            Pos = base_position(Vtheta[J], vars(Poly));
+            if (Pos >= 0) {
+                Has_theta = 1;
+                break;
+            }
+        }
+        if (Has_theta == 0) {
+            B_chi = cons(Poly, B_chi);
+        }
+    }
+
+    return reverse(B_chi);
+}
+
+////2026-08-11-symalg.rr より
+/*
+  NT: S = \sum S_\chi,  k[s] 加群 作用は s_i<--> \sum a_{ij} x_j \pd{j}
+  Symmetry Algebra: Algorithm 4.2 の実装
+  b \in B_\chi から E \in S_\chi を構成する
+*/
+
+// --- 補助関数: リストの特定のインデックスの要素を末尾に移動する ---
+def tk_put_last(List, Idx) {
+    local Res, I;
+    Res = [];
+    for (I = 0; I < length(List); I++) {
+        if (I != Idx) {
+            Res = cons(List[I], Res);
+        }
+    }
+    Res = reverse(Res);
+    Res = append(Res, [List[Idx]]);
+    return Res;
+}
+
+// --- 補助関数: Weyl 代数での K 乗の計算 ---
+def tk_weyl_power(Poly, K, Vx) {
+    local Res, I;
+    Res = 1;
+    for (I = 0; I < K; I++) {
+        Res = poly_dmul(Res, Poly, Vx);
+    }
+    return Res;
+}
+
+// --- 補助関数: 多項式 b(s) にオイラー作用素 Thetas を非可換積として代入する ---
+def tk_eval_b_theta(B_poly, S_vars, Thetas, Vx) {
+    local Dp_b, Res, C, E_vec, Term, I;
+    Dp_b = dp_ptod(B_poly, S_vars);
+    Res = 0;
+    
+    while (Dp_b != 0) {
+        C = dp_hc(Dp_b);
+        E_vec = dp_etov(dp_ht(Dp_b));
+        Term = C;
+        for (I = 0; I < length(S_vars); I++) {
+            if (E_vec[I] > 0) {
+                Term = poly_dmul(Term, tk_weyl_power(Thetas[I], E_vec[I], Vx), Vx);
+            }
+        }
+        Res = Res + Term;
+        Dp_b = dp_rest(Dp_b);
+    }
+    return Res;
+}
+
+// --- 補助関数: Weyl 代数における \partial_i^K による正確な右除算 ---
+def tk_right_exact_div_dx(Poly, Dx_var, K, Vd) {
+    local Dp_poly, Res, C, E_vec, Term, I, Pos;
+    if (Poly == 0) {
+        return 0;
+    }
+    Pos = base_position(Dx_var, Vd);
+    Dp_poly = dp_ptod(Poly, Vd);
+    Res = 0;
+    
+    while (Dp_poly != 0) {
+        C = dp_hc(Dp_poly);
+        E_vec = dp_etov(dp_ht(Dp_poly));
+        // 理論上割り切れることが保証されているため、指数を安全に減算
+        if (E_vec[Pos] >= K) {
+            E_vec[Pos] = E_vec[Pos] - K;
+        } else {
+            E_vec[Pos] = 0; 
+        }
+        
+        Term = C;
+        // 新しい指数ベクトルから標準多項式を復元
+        for (I = 0; I < length(Vd); I++) {
+            if (E_vec[I] > 0) {
+                Term = Term * Vd[I]^E_vec[I];
+            }
+        }
+        Res = Res + Term;
+        Dp_poly = dp_rest(Dp_poly);
+    }
+    return Res;
+}
+
+
+// =====================================================================
+// メイン関数: Saito (2001) Algorithm 4.2
+// 入力: B_poly (b \in B_\chi), U, V (\chi = Au - Av), A_mat (GKZ行列), I_A
+// =====================================================================
+def tk_saito_algo_4_2_orig(B_poly, U, V, A_mat, I_A, S_vars, Vx, Vdx) {
+    local N_vars, D_vars, Thetas, I, J, Theta_i, Dv;
+    local B_theta, E, Vx_perm, Vdx_perm, Vd_perm, Gb, Res_nf;
+
+    N_vars = length(Vx);
+    D_vars = length(S_vars);
+
+    // 1. オイラー作用素の構成: Theta_i = sum A_mat[I][J] * Vx[J] * Vdx[J]
+    Thetas = newvect(D_vars);
+    for (I = 0; I < D_vars; I++) {
+        Theta_i = 0;
+        for (J = 0; J < N_vars; J++) {
+            Theta_i = Theta_i + A_mat[I][J] * Vx[J] * Vdx[J];
+        }
+        Thetas[I] = Theta_i;
+    }
+
+    // 2. b(Theta) の厳密な Weyl 評価
+    B_theta = tk_eval_b_theta(B_poly, S_vars, vtol(Thetas), Vx);
+
+    // 3. E = b(Theta) * \partial^v の初期化
+    Dv = 1;
+    for (I = 0; I < N_vars; I++) {
+        if (V[I] > 0) {
+            Dv = Dv * Vdx[I]^V[I];
+        }
+    }
+    E = poly_dmul(B_theta, Dv, Vx);
+
+    // 4. Algorithm 4.2 の削減ループ
+    for (I = 0; I < N_vars; I++) {
+        if (U[I] == 0) {
+            continue; // 割る必要がない変数はスキップ
+        }
+
+        // \partial_i が最小の変数となるように変数リストを並べ替える
+        Vx_perm = tk_put_last(Vx, I);
+        Vdx_perm = tk_put_last(Vdx, I);
+        Vd_perm = append(Vx_perm, Vdx_perm);
+
+        // 並べ替えた変数で I_A のグレブナー基底を計算
+        //Ref: toricが homogeneous でない時は 0 でなく, lex order が必要.
+        Ord_42=Tk_UV_ord_42; //2026.08.16 N.T.  lex  cf. 
+	printf("Vd_perm=%a, Using order = %a.\n",Vd_perm,Ord_42);
+        Gb = nd_weyl_gr(I_A, Vd_perm, 0, Ord_42); //2026.08.16 N.T.  lex for 1F1
+
+        // E を Gb で簡約 (true normal form の分子と分母の商をとる)
+        Res_nf = p_true_nf(E, Gb, Vd_perm, Ord_42); dp_ord(0); //2026.08.16 N.T. lex
+        E = Res_nf[0] / Res_nf[1];
+
+        // 簡約された E を右から \partial_i^{U[I]} で正確に割り算
+        E = tk_right_exact_div_dx(E, Vdx_perm[N_vars - 1], U[I], Vd_perm);
+    }
+
+    return E;
+}
+
+// === 実行サンプル ===
+def tk_example_algo_4_2() {
+    local A_mat, U, V_vec, I_A, B_poly, S_vars, Vx, Vdx, E_ans;
+    
+    A_mat = matrix_list_to_matrix([
+        [1, 1, 1, 1],
+        [0, 1, 2, 3]
+    ]);
+    S_vars = [s1, s2];
+    Vx = [x1, x2, x3, x4];
+    Vdx = [dx1, dx2, dx3, dx4];
+    
+    I_A = [dx2^2 - dx1*dx3, dx3^2 - dx2*dx4, dx1*dx4 - dx2*dx3];
+    
+    U = [1, 0, 0, 0];
+    V_vec = [0, 1, 0, 0];
+    B_poly = s2; // 例としての仮の b-多項式
+    
+    printf("Executing Saito (2001) Algorithm 4.2...\n");
+    E_ans = tk_saito_algo_4_2(B_poly, U, V_vec, A_mat, I_A, S_vars, Vx, Vdx);
+    printf("Resulting Symmetry Operator E:\n%a\n", E_ans);
+}
+
+//tk_example_algo_4_2();
+
+
+// 2026.08.15
+Xm_noX=1;;
+def tk_v_to_monomial(Vdx,U) {
+  M=1;
+  for (I=0; I<length(Vdx); I++) {
+    M=M*Vdx[I]^U[I];
+  }
+  return M;
+}
+def tk_append_all(L) {
+  All=[];
+  for (I=0; I<length(L); I++) {
+    All=append(All,L[I]);
+  }
+  return All;
+}
+
+// --- 新規追加: 指定した変数を最小にする Block order 行列を生成 ---
+/*
+  Saito (2001) Algorithm 4.2 のための完全なブロック順序行列生成
+  指定: "最後の変数を最小とし、残りの変数は Grevlex とする"
+*/
+def tk_elimination_matrix(N_total) {
+    local M, I, J;
+    M = newmat(N_total, N_total);
+    
+    // --- ブロック1: 前半の N_total - 1 個の変数に対する Grevlex ---
+    // 第0行: 最後の変数"以外"の全次数
+    for (J = 0; J < N_total - 1; J++) {
+        M[0][J] = 1;
+    }
+    
+    // 第1行 〜 N_total - 2 行: Grevlex のタイブレーク (後ろの変数から優先して -1 を置く)
+    for (I = 1; I < N_total - 1; I++) {
+        M[I][(N_total - 1) - I] = -1;
+    }
+    
+    // --- ブロック2: 最後の変数 (最小とする変数) ---
+    // 第 N_total - 1 行: 前半の変数が完全に一致した場合のみ、最後の変数の次数で比較
+    M[N_total - 1][N_total - 1] = 1;
+    
+    return M;
+}
+
+// --- 新規追加: 多項式が斉次 (homogeneous) であるか判定する ---
+def tk_is_homogeneous(Poly, Vlist) {
+    local Dp_poly, Deg, E, I, Sum;
+    if (Poly == 0) return 1;
+    
+    Dp_poly = dp_ptod(Poly, Vlist);
+    if (Dp_poly == 0) return 1;
+    
+    // 先頭項の全次数を計算
+    E = dp_etov(dp_ht(Dp_poly));
+    Deg = 0;
+    for (I = 0; I < length(E); I++) Deg = Deg + E[I];
+    
+    Dp_poly = dp_rest(Dp_poly);
+    // 残りの全項の次数が一致するかチェック
+    while (Dp_poly != 0) {
+        E = dp_etov(dp_ht(Dp_poly));
+        Sum = 0;
+        for (I = 0; I < length(E); I++) Sum = Sum + E[I];
+        if (Sum != Deg) return 0; // 非斉次
+        Dp_poly = dp_rest(Dp_poly);
+    }
+    return 1;
+}
+
+// --- 新規追加: イデアル全体が斉次であるか判定する ---
+def tk_is_homogeneous_ideal(Ideal, Vlist) {
+    local I;
+    for (I = 0; I < length(Ideal); I++) {
+        if (tk_is_homogeneous(Ideal[I], Vlist) == 0) {
+            return 0; // 1つでも非斉次があれば 0 を返す
+        }
+    }
+    return 1;
+}
+
+// 2026.08.20
+def tk_reverse_lex_mat2(N) {
+  Mat=newmat(2*N+1,2*N);
+  for (I=0; I<2*N; I++) {
+    Mat[I][2*N-1-I]=-1;
+  }
+  for (I=0; I<2*N; I++) Mat[2*N][I]=1;
+  return Mat;
+}
+
+// =====================================================================
+// メイン関数: Saito (2001) Algorithm 4.2 (ハイブリッド自動分岐版)  2026.08.17
+// =====================================================================
+def tk_saito_algo_4_2(B_poly, U, V, A_mat, I_A, S_vars, Vx, Vdx) {
+    local N_vars, D_vars, Thetas, I, J, Theta_i, Dv;
+    local B_theta, E, Vx_perm, Vdx_perm, Vd_perm, Gb, Res_nf, Ord_mat, Is_homo;
+
+    N_vars = length(Vx);
+    D_vars = length(S_vars);
+
+    // イデアルの斉次性チェック
+    Is_homo = tk_is_homogeneous_ideal(I_A, Vdx);
+    if (Is_homo == 1) {
+        printf("I_A is homogeneous. Using Block Grevlex order.\n");
+        Ord_mat = tk_elimination_matrix(2 * N_vars);
+    } else {
+        printf("I_A is non-homogeneous. Using reverse lexicographic order. 2026.08.20. \n");
+	printf("Warning: it is not well-order. The reduction might not stop. Todo: tangent cone??\n");
+//        Ord_mat = 2; // 順序指定 2 は純粋な Lexicographic order
+        Ord_mat = tk_reverse_lex_mat2(N_vars); // 順序指定 は reverse lex order 停止性は OK?
+    }
+
+    Thetas = newvect(D_vars);
+    for (I = 0; I < D_vars; I++) {
+        Theta_i = 0;
+        for (J = 0; J < N_vars; J++) {
+            Theta_i = Theta_i + A_mat[I][J] * Vx[J] * Vdx[J];
+        }
+        Thetas[I] = Theta_i;
+    }
+
+    B_theta = tk_eval_b_theta(B_poly, S_vars, vtol(Thetas), Vx);
+
+    Dv = 1;
+    for (I = 0; I < N_vars; I++) {
+        if (V[I] > 0) {
+            Dv = Dv * Vdx[I]^V[I];
+        }
+    }
+    E = poly_dmul(B_theta, Dv, Vx);
+
+    for (I = 0; I < N_vars; I++) {
+        if (U[I] == 0) continue;
+
+        Vx_perm = tk_put_last(Vx, I);
+        Vdx_perm = tk_put_last(Vdx, I);
+        Vd_perm = append(Vx_perm, Vdx_perm);
+
+	Ord_orig=dp_ord();
+	dp_ord(Ord_mat);
+	printf("Vd_perm=%a\n",Vd_perm);
+	printf("I_A=%a\n",map(dp_ptod,I_A,Vdx_perm));
+        Gb = nd_weyl_gr(I_A, Vd_perm, 0, Ord_mat);
+//	printf("tk_p_weyl_true_nf(%a,%a,%a,Ord_mat_list=%a);\n",E,Gb,Vd_perm,matrix_matrix_to_list(Ord_mat));
+        Res_nf = tk_p_weyl_true_nf(E, Gb, Vd_perm, Ord_mat);
+	dp_ord(Ord_orig); 
+        
+        if (Res_nf[1] != 1) {
+            E = Res_nf[0] / Res_nf[1];
+        } else {
+            E = Res_nf[0];
+        }
+
+        E = tk_right_exact_div_dx(E, Vdx_perm[N_vars - 1], U[I], Vd_perm);
+    }
+    return E;
+}
+// =====================================================================
+// メイン関数: Saito (2001) Algorithm 4.2 (ブロック順序行列対応版)
+// =====================================================================
+def tk_saito_algo_4_2_orig2(B_poly, U, V, A_mat, I_A, S_vars, Vx, Vdx) {
+    local N_vars, D_vars, Thetas, I, J, Theta_i, Dv;
+    local B_theta, E, Vx_perm, Vdx_perm, Vd_perm, Gb, Res_nf, Ord_mat;
+
+    printf("tk_saito_algo_4_2 block order version.\n");
+    N_vars = length(Vx);
+    D_vars = length(S_vars);
+
+    Thetas = newvect(D_vars);
+    for (I = 0; I < D_vars; I++) {
+        Theta_i = 0;
+        for (J = 0; J < N_vars; J++) {
+            Theta_i = Theta_i + A_mat[I][J] * Vx[J] * Vdx[J];
+        }
+        Thetas[I] = Theta_i;
+    }
+
+    B_theta = tk_eval_b_theta(B_poly, S_vars, vtol(Thetas), Vx);
+
+    Dv = 1;
+    for (I = 0; I < N_vars; I++) {
+        if (V[I] > 0) {
+            Dv = Dv * Vdx[I]^V[I];
+        }
+    }
+    E = poly_dmul(B_theta, Dv, Vx);
+
+    // ブロック順序行列の生成 (2 * N_vars 変数用)
+    Ord_mat = tk_elimination_matrix(2 * N_vars);
+
+    for (I = 0; I < N_vars; I++) {
+        if (U[I] == 0) continue;
+
+        Vx_perm = tk_put_last(Vx, I);
+        Vdx_perm = tk_put_last(Vdx, I);
+        Vd_perm = append(Vx_perm, Vdx_perm);
+
+        // 順序に行列 Ord_mat を指定して確実な elimination を行う
+	Ord_orig=dp_ord(); dp_ord(Ord_mat);
+	printf("Vd_perm=%a\n",Vd_perm);
+	printf("I_A=%a\n",map(dp_ptod,I_A,Vdx_perm));
+        Gb = nd_weyl_gr(I_A, Vd_perm, 0, Ord_mat);
+        Res_nf = tk_p_weyl_true_nf(E, Gb, Vd_perm, Ord_mat);
+	dp_ord(Ord_orig);
+        
+        if (Res_nf[1] != 1) {
+            E = Res_nf[0] / Res_nf[1]; // 分母が定数なら許容
+        } else {
+            E = Res_nf[0];
+        }
+
+        E = tk_right_exact_div_dx(E, Vdx_perm[N_vars - 1], U[I], Vd_perm);
+    }
+    return E;
+}
+
+// --- 修正版: 正しい modulo D I_A でのゼロ判定検証関数 ---  2026.08.17
+def check_symalg_correct(A, E_ans, B_poly, U, V, S_vars, Vx, Vdx) {
+    local DD, NN, I, J, Thetas, B_theta, Du, Dv, Diff, Gb_A, Diff_nf, Vall;
+    
+    A = matrix_matrix_to_list(A);
+    DD = length(A); NN = length(A[0]);
+    
+    // s_i を \theta_i に完全に展開
+    Thetas = newvect(DD);
+    for (I = 0; I < DD; I++) {
+        Thetas[I] = 0;
+        for (J = 0; J < NN; J++) {
+            Thetas[I] = Thetas[I] + A[I][J] * Vx[J] * Vdx[J];
+        }
+    }
+    B_theta = tk_eval_b_theta(B_poly, S_vars, vtol(Thetas), Vx);
+    
+    Du = tk_v_to_monomial(Vdx, U);
+    Dv = tk_v_to_monomial(Vdx, V);
+    
+    // s_i を含まない純粋な Weyl 代数上での Diff
+    Diff = poly_dmul(E_ans, Du, Vx) - poly_dmul(B_theta, Dv, Vx);
+    
+    Vall = append(Vx, Vdx);
+    // 純粋な I_A で簡約
+    Gb_A = nd_weyl_gr(poly_toric_ideal(A, Vdx | quiet=1), Vall, 0, 0);
+    Diff_nf = tk_p_weyl_true_nf(Diff, Gb_A, Vall, 0);
+    
+    if (Diff_nf[0] == 0) {
+        printf("check_symalg_correct: PASSED\n");
+        return 1;
+    } else {
+        printf("check_symalg_correct: FAILED\nDiff_nf = %a\n", Diff_nf); debug();
+        return 0;
+    }
+}
+
+def check_symalg(A,E,Bf,U,V) {
+  A=matrix_matrix_to_list(A);
+  DD=length(A); NN=length(A[0]);
+  S=base_var_list(s,1,DD);
+  F=sm1.gkz([A,S]); Vx=F[1]; F=F[0]; Vdx=poly_dvar(Vx);
+  //Vx=base_var_list(x,1,NN); Vdx=poly_dvar(Vx); F=poly_toric_ideal(A,Vdx);
+  return check_symalg_correct(A, E, Bf, U, V, S, Vx, Vdx); // 2026.08.17
+
+  Du=tk_v_to_monomial(Vdx,U);
+  Dv=tk_v_to_monomial(Vdx,V);
+  if (Contiguity_verbose) printf("E=%a * Du=%a ~ Bf=%a * Dv=%a\n",E,Du,fctr(Bf),Dv);
+  Diff=poly_dmul(E,Du,Vx)-Bf*Dv;
+  if (Contiguity_verbose) printf("Diff=%a\n",Diff);
+  Ord_orig=dp_ord();
+  dp_ord(0);
+  dp_gr_print(1);
+  G=nd_weyl_gr(F,Vall=tk_append_all([S,Vx,poly_dvar(S),Vdx]),0,0);
+  //G=nd_weyl_gr(F,Vall=tk_append_all([Vx,Vdx]),0,0);
+  if (Contiguity_verbose) printf("G=%a\n",G);
+  Diff_nf=tk_p_weyl_true_nf(Diff,G,Vall,0);
+  printf("Diff_nf=%a\n",Diff_nf);
+  dp_ord(Ord_orig);
+  if (Diff_nf[0]==0) {
+    printf("check_symalg: PASSED\n");
+    return 1;
+  }else{
+    printf("check_symalg: FAILED\n\n"); debug();
+    return 0;
+  }
+}
+
+def check_symalg_with_beta(A,E,Bf,U,V,Beta,Beta_var) {
+  if (type(getopt(prob))>0) Prob=1; else Prob=0;
+  if (Prob) {
+    printf("check_symalg_with_beta is performed by probabilistic checking...\n");
+    printf("Beta_var=%a\n",Beta_var);
+    Rule_Beta_var=[];
+    for (I=0; I<length(Beta_var); I++) {
+      Rule_Beta_var=cons([Beta_var[I],random()%17],Rule_Beta_var);
+    }
+    Rule_Beta_var=reverse(Rule_Beta_var);
+    printf("Rule_Beta_var=%a\n",Rule_Beta_var);
+    Beta=base_replace(Beta,Rule_Beta_var);  // Beta を数に.
+  }
+  A=matrix_matrix_to_list(A);
+  DD=length(A); NN=length(A[0]);
+  S=base_var_list(s,1,DD);
+  F=sm1.gkz([A,S]);
+  Vx=F[1]; 
+
+  Rule=assoc(S,Beta);
+  F=base_replace(F[0],Rule);
+  E=base_replace(E,Rule);
+  Bf=base_replace(Bf,Rule);
+
+  Vdx=poly_dvar(Vx);
+  Du=tk_v_to_monomial(Vdx,U);
+  Dv=tk_v_to_monomial(Vdx,V);
+  if (Contiguity_verbose) printf("E=%a * Du=%a ~ Bf=%a * Dv=%a\n",E,Du,fctr(Bf),Dv);
+  Diff=poly_dmul(E,Du,Vx)-Bf*Dv;
+  Ord_orig=dp_ord();
+  dp_ord(0);
+  dp_gr_print(1);
+  G=nd_weyl_gr(F,Vall=tk_append_all([Beta_var,Vx,poly_dvar(Beta_var),Vdx]),0,0);
+  Diff_nf=tk_p_weyl_true_nf(Diff,G,Vall,0);
+  printf("Diff_nf=%a\n",Diff_nf);
+  dp_ord(Ord_orig);
+  if (Diff_nf[0]==0) {
+    printf("check_symalg_with_beta: PASSED\n");
+    return 1;
+  }else{
+    printf("check_symalg_with_beta: FAILED\n\n"); printf("Todo: correct version has not yet written.\n"); // Todo, see check_symalg.
+    return 0;
+  }
+}
+
+//-----------------------
+
+def tk_uv_contiguity(UV,A,Beta) {
+  if (type(getopt(b_ideal))>0) return tk_uv_contiguity_v2(UV,A,Beta | option_list=getopt());
+  else return tk_uv_contiguity_v1(UV,A,Beta | option_list=getopt());
+}
+def tk_uv_contiguity_v1(UV,A,Beta) {
+  printf("Executing tk_uv_contiguity_v1(UV=%a,A=%a,Beta=%a)\n",UV,A,Beta);
+  A=matrix_matrix_to_list(A);
+  DD=length(A); NN=length(A[0]);
+
+  A_mat = matrix_list_to_matrix(A);
+  S_vars = base_var_list(s,1,DD);
+  Vx = base_var_list(x,1,NN);
+  Vdx = poly_dvar(Vx);
+  I_A=poly_toric_ideal(A,Vdx | quiet=1);
+    
+  U = UV[0];
+  V_vec = UV[1];
+//// 2026-08-15-test-symalg.rr を参考に.
+  // computing M_\chi,  2026-08-14-monomial-part.rr
+  printf("Computing M_chi with iteration for U=%a, V=%a...\n", U, V_vec);
+  M_chi_ans = tk_compute_M_chi_general(I_A, U, V_vec, Vdx);
+  printf("Generators of M_chi:\n%a\n", M_chi_ans);
+
+  // computing b-ideal B_chi_ans, 2026-08-11-b-ideal.rr
+  B_chi_ans = tk_compute_B_chi(M_chi_ans, A, Vdx, Vtheta=base_var_list(t,1,NN), Vs=base_var_list(s,1,DD) | option_list=getopt());
+  printf("b-ideal B_chi is %a\n",B_chi_ans);
+  if (length(B_chi_ans)>1) printf("Warning! Using only the top element of b-ideal.\n");
+  Tk_UV_B_ideal=B_chi_ans;
+  B_poly = B_chi_ans[0]; //  b-多項式, 上記 T10 より.
+
+  printf("U=%a, V=%a, B_poly=%a\n",U,V_vec,B_poly);
+    
+  printf("Executing Saito (2001) Algorithm 4.2...\n");
+  E_ans = tk_saito_algo_4_2(B_poly, U, V_vec, A_mat, I_A, S_vars, Vx, Vdx);
+  if (Contiguity_verbose) printf("Resulting Symmetry Operator E:\n%a\n", E_ans);
+
+  printf("Checking the result by check_symalg.\n");
+  check_symalg(A,E_ans,B_poly,U,V_vec | option_list=getopt());
+  printf("---------- Done checking the result of symalg.\n");
+  printf("Checking the result by check_symalg_with_beta.\n");
+  check_symalg_with_beta(A,E_ans,B_poly,U,V_vec,Beta,vars(Beta) | option_list=getopt());
+  printf("---------- Done checking the result of symalg_with_beta.\n");
+
+  Dxv=tk_v_to_monomial(Vdx,V_vec);
+  Tk_UV_Bf_E=append([B_poly*Dxv,E_ans],Vx);
+  Ans=base_replace(Tk_UV_Bf_E,Rule=assoc(S_vars,Beta));
+  printf("assoc(S_vars,Beta)=%a\n",Rule);
+  return Ans;
+}
+
+/*
+  b-ideal が単項生成でないとき list で答えを戻す.
+*/
+def tk_uv_contiguity_v2(UV,A,Beta) {
+  printf("Executing tk_uv_contiguity_v2(UV=%a,A=%a,Beta=%a)\n",UV,A,Beta);
+  A=matrix_matrix_to_list(A);
+  DD=length(A); NN=length(A[0]);
+
+  A_mat = matrix_list_to_matrix(A);
+  S_vars = base_var_list(s,1,DD);
+  Vx = base_var_list(x,1,NN);
+  Vdx = poly_dvar(Vx);
+  I_A=poly_toric_ideal(A,Vdx | quiet=1);
+    
+  U = UV[0];
+  V_vec = UV[1];
+//// 2026-08-15-test-symalg.rr を参考に.
+  // computing M_\chi,  2026-08-14-monomial-part.rr
+  printf("Computing M_chi with iteration for U=%a, V=%a...\n", U, V_vec);
+  M_chi_ans = tk_compute_M_chi_general(I_A, U, V_vec, Vdx);
+  printf("Generators of M_chi:\n%a\n", M_chi_ans);
+
+  // computing b-ideal B_chi_ans, 2026-08-11-b-ideal.rr
+  B_chi_ans = tk_compute_B_chi(M_chi_ans, A, Vdx, Vtheta=base_var_list(t,1,NN), Vs=base_var_list(s,1,DD));
+  printf("b-ideal B_chi is %a\n",B_chi_ans);
+  Tk_UV_B_ideal=B_chi_ans;
+
+  Ans_all=[];
+  for (I=0; I<length(B_chi_ans); I++) {
+    B_poly=B_chi_ans[I];
+    printf("U=%a, V=%a, B_poly=%a\n",U,V_vec,B_poly);
+    
+    printf("Executing Saito (2001) Algorithm 4.2...\n");
+    E_ans = tk_saito_algo_4_2(B_poly, U, V_vec, A_mat, I_A, S_vars, Vx, Vdx);
+    if (Contiguity_verbose) printf("Resulting Symmetry Operator E:\n%a\n", E_ans);
+
+    check_symalg(A,E_ans,B_poly,U,V_vec);
+    check_symalg_with_beta(A,E_ans,B_poly,U,V_vec,Beta,vars(Beta));
+
+    Dxv=tk_v_to_monomial(Vdx,V_vec);
+    Tk_UV_Bf_E=append([B_poly*Dxv,E_ans],Vx);
+    Ans= base_replace(Tk_UV_Bf_E,Rule=assoc(S_vars,Beta));
+    printf("I=%a; assoc(S_vars,Beta)=%a\n",I,Rule);
+    Ans_all=cons(Ans,Ans_all);
+  }
+  return reverse(Ans_all);
+}
+
+def uv_len(UV) {
+  Len=0;
+  for (I=0; I<length(UV[0]); I++) {
+    Len += number_abs(UV[0][I])+number_abs(UV[1][I]);
+  }
+  return Len;
+}
+def tk_chi_to_uv(A,Chi) {
+  if (type(getopt(opt))>0) Opt=getopt(opt);
+  else Opt=0;
+  if (Opt==0) return tk_chi_to_uv_main(A,Chi);
+  UV=tk_chi_to_uv_main(A,Chi);
+  Chi_minus=vtol(-matrix_list_to_matrix(Chi));
+  UV2=tk_chi_to_uv_main(A,Chi_minus);
+  UV2=[UV2[1],UV2[0]];
+  if (uv_len(UV) > uv_len(UV2)) return UV2;
+  else return UV;
+}
+////2026-08-07-banana-one-loop.rr より
+def tk_chi_to_uv_main(A,Chi) {
+  Dbeta=matrix_matrix_to_list(Chi);
+  HH_A=matrix_matrix_to_list(A);
+  HH_d=length(HH_A); HH_n=length(HH_A[0]);
+
+  /* --- 新規追加: 最短のシフトベクトル U, V を探索する --- */
+  Found_UV = 0;
+  Best_U = newvect(HH_n);
+  Best_V = newvect(HH_n);
+  /* 1. 長さ 1 のシフトを探索 ( U=e_j または V=e_j ) */
+  for (J = 0; J < HH_n; J++) {
+    Col = newvect(HH_d);
+    for (I = 0; I < HH_d; I++) Col[I] = HH_A[I][J];
+        
+    Diff1 = 0; Diff2 = 0;
+    for (I = 0; I < HH_d; I++) {
+      if (Col[I] != Dbeta[I]) Diff1 = 1;
+      if (-Col[I] != Dbeta[I]) Diff2 = 1;
+    }
+    if (Diff1 == 0) { Best_U[J] = 1; Found_UV = 1; break; }
+    if (Diff2 == 0) { Best_V[J] = 1; Found_UV = 1; break; }
+  }
+    
+  /* 2. 見つからなければ、長さ 2 のシフトを探索 */
+  if (Found_UV == 0) {
+    for (J = 0; J < HH_n; J++) {
+      for (K = 0; K < HH_n; K++) {
+	ColJ = newvect(HH_d); ColK = newvect(HH_d);
+	for (I = 0; I < HH_d; I++) { ColJ[I] = HH_A[I][J]; ColK[I] = HH_A[I][K]; }
+                
+	Diff1 = 0; Diff2 = 0; Diff3 = 0;
+	for (I = 0; I < HH_d; I++) {
+	  if (ColJ[I] + ColK[I] != Dbeta[I]) Diff1 = 1;
+	  if (-ColJ[I] - ColK[I] != Dbeta[I]) Diff2 = 1;
+	  if (ColJ[I] - ColK[I] != Dbeta[I]) Diff3 = 1;
+	}
+	if (Diff1 == 0) { Best_U[J]++; Best_U[K]++; Found_UV = 1; break; }
+	if (Diff2 == 0) { Best_V[J]++; Best_V[K]++; Found_UV = 1; break; }
+	if (Diff3 == 0) { Best_U[J]++; Best_V[K]++; Found_UV = 1; break; }
+      }
+      if (Found_UV == 1) break;
+    }
+  }
+    
+  /* 3. それでもダメなら poly_solve_linear (フォールバック) */
+  if (HH_no_short_uv) Found_UV=0;
+  if (Found_UV == 1) {
+    U = vtol(Best_U); V = vtol(Best_V);
+  } else {
+    W_vars = base_var_list(w, 1, HH_n);
+    Eqs = [];
+    for (I = 0; I < HH_d; I++) {
+      Eq = 0;
+      for (J = 0; J < HH_n; J++) Eq = Eq + HH_A[I][J] * W_vars[J];
+      Eqs = cons(Eq - Dbeta[I], Eqs);
+    }
+    Eqs = reverse(Eqs);
+    Ans = poly_solve_linear(Eqs, W_vars);
+    if (Ans == []) error("対応する GKZ のシフトベクトルが見つかりません。");
+        
+    Subst_rule = assoc(W_vars, vtol(newvect(length(W_vars))));
+    W_vals = [];
+    for (I = 0; I < length(W_vars); I++) {
+      Found = 0;
+      for (J = 0; J < length(Ans); J++) {
+	if (Ans[J][0] == W_vars[I]) {
+	  W_vals = cons(base_replace(Ans[J][1], Subst_rule), W_vals);
+	  Found = 1; break;
+	}
+      }
+      if (Found == 0) W_vals = cons(0, W_vals);
+    }
+    W_vals = reverse(W_vals);
+    U = []; V = [];
+    for (I = 0; I < length(W_vals); I++) {
+      if (W_vals[I] > 0) { U = cons(W_vals[I], U); V = cons(0, V); }
+      else { U = cons(0, U); V = cons(-W_vals[I], V); }
+    }
+    U = reverse(U); V = reverse(V);
+  }
+  return [U,V];
+}
+// tk_chi_to_uv([[1,1,1,1],[0,1,3,4]],[1,2]);
+// tk_chi_to_uv([[1,1,1,1],[0,1,3,4]],[-1,-2]);
+
+/*
+T0b=uv_contiguity([[1,0,0],[0,0,0]],[[1,1,1],[0,1,2]],[b1,b2]);
+T0=tk_uv_contiguity([[1,0,0],[0,0,0]],[[1,1,1],[0,1,2]],[b1,b2]);
+map(print,["-------",T0b,T0]);;
+*/
+
+// test. 2026-08-09-representative.py で動く. 
+
+// 2026.09.03
+/*
+ S(t) で parametrize された affine 空間で b-function を求めると t の関数になる.
+ b-function b(t) の linear factor を Bfac とした時, 
+ Bfac=0 となる affine 空間の表現(func_contiguity.py 準拠)を求める. 
+*/
+def bf_factor_to_affine_space(S,Bfac) {
+  V=vars(S);
+  D=length(S);
+  SV=base_var_list(_s,1,D);
+  Eq=[Bfac];
+  for (I=0; I<D; I++) Eq=cons(SV[I]-S[I],Eq);
+  G=poly_elimination_ideal(Eq,SV);
+  //printf("G=%a\n",G);
+  if ((length(G)==1) && (type(G[0]) < 2)) return [];
+  Ans=poly_coefficients_of_monomial_list(G,cons(1,SV));
+  return Ans;
+}
+/*
+T0=bf_factor_to_affine_space([t1+t2+1/2,2*t2],t1-t2-1);
+T1=bf_factor_to_affine_space([t1+t2+1/2,2*t2,t1],t1-t2-1);
+T3=bf_factor_to_affine_space([t1,t2,t3],t1-t2-1);
+T4=bf_factor_to_affine_space([t1,t2,t3],1);
+T5=bf_factor_to_affine_space([t1+1/2,2*t1,t1],t1-1);
+*/
+
+// 2026.09.04
+def b_ideal_to_affine_spaces(S,B_ideal) {
+  //printf("S=%a, B_ideal=%a\n",S,B_ideal);
+  if (vars(B_ideal)==[]) return [];
+  if ((length(B_ideal)==1) && (type(B_ideal[0]) < 2)) return [];
+  B_ideal=primadec(B_ideal,vars(B_ideal));
+  Affine=[];
+  V=vars(S);
+  D=length(S);
+  SV=base_var_list(_s,1,D);
+  for (I=0; I<length(B_ideal); I++) {
+    Eq=B_ideal[I][1];  // primary component
+    for (II=0; II<D; II++) Eq=cons(SV[II]-S[II],Eq);
+    G=poly_elimination_ideal(Eq,SV);
+    //printf("G=%a\n",G);
+    if ((length(G)==1) && (type(G[0]) < 2)) continue;
+    Ans=poly_coefficients_of_monomial_list(G,cons(1,SV));
+    Affine=cons(Ans,Affine);
+  }
+  return Affine;
+}
+
+/*
+Ideal3=[256*b1^5+1152*b1^4+(-1440*b2^2+4896*b2-2128)*b1^3+(-2160*b2^3+7128*b2^2-5448*b2+1032)*b1^2+(-1215*b2^4+4374*b2^3-4581*b2^2+1638*b2-144)*b1-243*b2^5+972*b2^4-1269*b2^3+648*b2^2-108*b2,(-256*b2+512)*b1^4+(-768*b2^2+1920*b2-768)*b1^3+(-864*b2^3+2592*b2^2-1904*b2+352)*b1^2+(-432*b2^4+1512*b2^3-1560*b2^2+552*b2-48)*b1-81*b2^5+324*b2^4-423*b2^3+216*b2^2-36*b2];;
+T=b_ideal_to_affine_spaces([b1,b2,b3],Ideal3);
+
+T2=b_ideal_to_affine_spaces([b1,b2,b2],[(b1-1)*(b1-2)/2]);
+*/
+
+
+end;;

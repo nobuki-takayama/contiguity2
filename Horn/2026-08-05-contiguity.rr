@@ -1,0 +1,532 @@
+/*
+  Generalized contiguity for A-hg systems
+  E dx^u = b dx^v
+*/
+/* changelog
+   2025.04.01  新しいファイル名に.
+   2025.03.30  2024-03-30-check-F2.rr で確かめ.
+               gauss_contiguity_by_GKZ() は x,dx で結果を戻す.
+*/
+//import("2024-08-23-M-chi.rr");;
+import("yang.rr");;
+import("2026-08-15-uv_contiguity.rr");; // to test new vection. 2026-08-15
+printf("tk_uv_contiguity() [saito isom] is used. 2026-08-05.\n");;
+extern Debug;;
+extern Debug_G;;
+extern Debug_T_matrix;;
+extern Debug_Mat7;;
+extern Debug_G_G2;;
+Debug=1;;
+Debug_G=0;;
+Xm_noX=1;;
+
+extern Contiguity_verbose;;
+Contiguity_verbose=1;;
+
+def contiguity_verbose(Level) {
+  printf("Contiguity_verbose and Debug is set to %a\n",Level);
+  Debug=Level;
+  Contiguity_verbose=Level;
+}
+
+/*
+  中山methodで GB へ変換する行列を求める.
+  2025.03.18
+*/
+/* 
+   T_matrix[0]=T_matrix[1]*T_matrix[2] 
+   T_matrix[0]-T_matrix[1]*T_matrix[2]; //should be 0
+*/
+def get_transformation_matrix(F,V,Ord) {
+  if (type(getopt(weyl))>0) {
+    Weyl=1;
+  }else{
+    Weyl=0;
+  }
+  Check=0;
+  // Check=1; //for debug
+  MM=length(F);
+  F2=[];
+  for (I=0; I<MM; I++) {
+    FF=newvect(MM+1); FF[0]=F[I];
+    FF[I+1]=1;
+    F2=cons(vtol(FF),F2);
+  }
+  F2=reverse(F2);
+
+  if (Weyl) {
+    G=nd_weyl_gr(F,V,0,Ord);
+    G2=nd_weyl_gr(F2,V,0,[1,Ord]);
+  }else{
+    G=nd_gr(F,V,0,Ord);
+    G2=nd_gr(F2,V,0,[1,Ord]);
+  }
+  Debug_G_G2=[G,G2];
+  T_matrix=transformation_as_matrix(F,G2,V,Check | option_list=getopt());
+  return T_matrix; 
+}
+def transformation_as_matrix(F,G2,V,Check) {
+  if (type(getopt(weyl))>0) Weyl=1;else Weyl=0;
+  if (Weyl) {
+    VV=newvect(length(V)/2);
+    for (I=0; I<length(VV); I++) VV[I]=V[I];
+    VV=vtol(VV);
+  }
+  Mat=[]; GG=[];
+  for (I=0; I<length(G2); I++) {
+    if (G2[I][0] != 0) {
+      if (Debug) printf("G[%a]=%a\n",I,G2[I]);
+      S=G2[I][0];
+      MatI=newvect(length(G2[I])-1);
+      for (J=1; J<length(G2[I]); J++) {
+        MatI[J-1]=G2[I][J];
+        if (Check) {
+          if (Weyl) {
+            S=S-poly_dmul(G2[I][J],F[J-1],VV);
+          }else{
+            S=S-G2[I][J]*F[J-1];
+          }
+        }
+      }
+      Mat=cons(vtol(MatI),Mat);
+      GG=cons(G2[I][0],GG);
+    }
+    if (Check) {
+      if (S != 0) {
+        print("transformation_as_matrix, check fails."); debug();
+        return 0;
+      }else{
+	printf("I=%a, check passed.\n",I);
+      }
+    }
+  }
+  Mat=reverse(Mat);
+  GG=reverse(GG);
+  T_matrix=map(matrix_list_to_matrix,[GG,Mat,F]);
+  return T_matrix;
+}
+
+/*
+T0=get_transformation_matrix([x^2+y^2-4,x*y-1,a*y-1],[x,y],2);
+printf("Is it zero vector? %a\n",T0[0]-T0[1]*T0[2]);;
+*/
+//T1=get_transformation_matrix([2*y*dx+3*x^2*dy,-2*x*dx-3*y*dy+6*s],[x,y,dx,dy],2 | weyl=1);
+/*
+F=sm1.gkz([[[1,0,0,-1],[0,1,0,1],[0,0,1,1]],[b1,b2,b3]]);;
+                              // x1,x2,x3,x4,b1,b2,b3   dx2,dx3 を残し他は消す.
+Mat7=poly_weight_to_ord_matrix([1,1,1,1,0,0,0,        1,0,0,1,0,0,0]);;
+V7=[x1,x2,x3,x4,b1,b2,b3];;
+T2=get_transformation_matrix(cons(dx1,F[0]),append(V7,poly_dvar(V7)),Mat7 | weyl=1);
+*/
+
+def at_one_rule_orig1(Xvars) {
+  MM=length(Xvars);
+  Rule=assoc(Xvars,base_makelist(1,k,1,MM));
+  return Rule;
+}
+
+def at_one_rule(Xvars) {
+  MM=length(Xvars);
+  X_plus1=newvect(MM,Xvars)+newvect(MM,base_makelist(1,k,1,MM));
+  Rule=assoc(Xvars,vtol(X_plus1));
+  return Rule;
+}
+
+
+/* left-right reduction のテスト版. できあがったら Prog へ */
+
+/*
+ dd1 = dd+1, dd2=dd+2, ...
+ Aop=[-(x1*dx1+a_1_dd1*x_dd1*dx_dd1+...-b_1),
+      -(x2*dx2+a_2_dd2*x_dd2*dx_dd2+...-b_2),
+      ...]
+  Xvar=[x1,x2,...,x_dd]
+  Wt  =[-1,-1,...,-1,   1,1,...,1]
+  Xvar_all=[x1,x2,...,x_dd, ...,x_n]
+*/
+/* make the top term irreducible 
+   return value = L + Witness*[Euler op with xi -> xi+1, 1<=i<=dd] mod x_1 D + ... + x_dd D
+*/
+def lr_red1_top(L,Aop,Xvar,Dvar,Wt,Xvar_all,Witness) {
+  if (Contiguity_verbose) printf("lr_red1_top(L=%a)\n",L); // for debug
+  if (Debug_G) debug();
+  if (L==0) { return L;}
+  DD=length(Aop);
+  for (I=0; I<DD; I++) Witness[I]=0;
+  V=append(Xvar,Dvar);
+  Rule=assoc(Xvar,base_makelist(0,k,1,DD));
+  MayReducible=1;
+  while (MayReducible) {
+    MayReducible=0;
+    L1=poly_initial_term(L | v=V,weight=Wt)[0];
+    L1=dp_dtop(dp_hm(dp_ptod(L1,V)),V);
+    VV=vars(L1);
+    R1=L-L1;
+    for (I=0; I<DD; I++) {
+      if (base_memberq(Dvar[I],VV)) {
+	L2=poly_dmul(H=red(L1/Dvar[I]),Aop[I],Xvar_all);
+	Witness[I] += H;
+	L3=base_replace(L2,Rule);
+	L4=base_replace(L3+R1,Rule);
+	if (L4==0) {
+	  return L4;
+	}
+	MayReducible=1;
+	L=L4;
+	break;
+      }
+    }
+  }
+  return L; 
+}
+/*
+Debug_G=1;
+lr_red1_top((x4-1)*dx4-3,[x4*dx4-x1*dx1-1,-x4*dx4-x2*dx2+2,-x4*dx4-x3*dx3+2],[x1,x2,x3],[dx1,dx2,dx3],[-1,-1,-1,1,1,1],[x1,x2,x3,x4],W=newvect(3));
+end;;
+*/
+
+def lr_red1(L,Aop,Xvar,Dvar,Wt,Xvar_all,Witness) {
+  if (Contiguity_verbose) printf("lr_red1(L=%a)\n",L); // for debug
+  if (Debug_G) debug();
+  if (L==0) { return L;}
+  DD=length(Aop);
+  V=append(Xvar,Dvar);
+  Rule=assoc(Xvar,base_makelist(0,k,1,DD));
+  Witness1=newvect(DD);
+  L1=lr_red1_top(L,Aop,Xvar,Dvar,Wt,Xvar_all,Witness1);
+  if (Contiguity_verbose) printf("lr_red1_top(%a)-->%a\n",L,L1); // for debug
+  if (L1==0) return L1;
+  L1_top=poly_initial_term(L1 | v=V,weight=Wt)[0];
+  L1_top=dp_dtop(dp_hm(dp_ptod(L1_top,V)),V);
+  R1=L1-L1_top;
+  Witness2=newvect(DD);
+  R2=lr_red1(R1,Aop,Xvar,Dvar,Wt,Xvar_all,Witness2);
+  for (I=0; I<DD; I++) Witness[I]=Witness1[I]+Witness2[I];
+  return base_replace(L1_top+R2,Rule); 
+}
+/*
+ L=L1(reduced) + Witness*[dxi-Aop[i]] mod Xvar*D?
+*/
+def check_witness(L1,L,Witness,Aop,Xvar,Xvar_all) {
+  if (Debug) {
+    printf("check_witness: Xvar=%a, Xvar_all=%a\n",Xvar,Xvar_all);
+    printf(" L[%a](orig) = L1[%a](reduced)+Witness[%a] [dxi-Aop[i]] mod Xvar*D\n",L,L1,Witness);
+  }
+  Dvar=poly_dvar(Xvar);
+  DD=length(Aop);
+  S=L1;
+  for (I=0; I<DD; I++) {
+    S += poly_dmul(Witness[I],Dvar[I]-Aop[I],Xvar_all);
+  }
+  S2 = S-L;
+  Rule=assoc(Xvar,vtol(newvect(DD)));
+  T = base_replace(S2,Rule);
+  if (T != 0) {
+    printf(" check_witness fails.\n");
+    debug();
+    return 0;
+  }
+  else printf(" check_witness: OK.\n");
+  return 1;
+}
+
+/*
+  A must be of the form (E_d,A')
+*/
+def lr_red(L,A,Xvar_all,Bvar,Witness) {
+  if (type(getopt(dd))>0) {
+    DD=getopt(dd);  // for partial restriction. 2026.08.07 
+                    // Ex. banana_one_loop  DD=length(A)-1
+  }else{
+    DD=length(A);
+  }
+  if (type(Witness)!=5) Witness=newvect(DD);
+  for (I=0; I<DD; I++) Witness[I]=0;
+  NN=length(A[0]);
+  Xvar=matrix_submatrix(Xvar_all,base_makelist(i,i,0,DD-1));
+  Dvar=poly_dvar(Xvar);
+  Wt=append(base_makelist(-1,i,1,DD),base_makelist(1,i,1,DD));
+  Dvar_all=poly_dvar(Xvar_all);
+  Aop=newvect(DD);   
+  for (I=0; I<DD; I++) {
+    Eop=A[I];
+    Aop[I]=-Xvar[I]*Dvar[I];
+    for (J=DD; J<NN; J++) {
+      Aop[I] +=-A[I][J]*Xvar_all[J]*Dvar_all[J];
+    }
+    Aop[I] += Bvar[I];
+  }
+  Aop=vtol(Aop);
+  if (Debug) printf("Aop=%a\n",Aop);
+  L1=lr_red1(L,Aop,Xvar,Dvar,Wt,Xvar_all,Witness);
+  check_witness(L1,L,Witness,Aop,Xvar,Xvar_all);
+  return L1;
+}
+
+
+// 2025-03-09
+/* multi index のモノミアル */
+def v2mon(Dvar_all,E) {
+  Op=1;
+  for (I=0; I<length(E); I++) {
+    Op = Op*Dvar_all[I]^E[I];
+  }
+  return Op;
+}
+def bdv_form(L,V,Dvar_all,Beta) {
+  /* L の exponent を P, P|v か?  b*d^v の形にできるか? 
+     L は monomial?
+  */
+  if (L==0) return 0;
+  L2=dp_ptod(L,Dvar_all);
+  if (dp_rest(L2)!=0) return 0;  /* L is not a monomial w.r.t Dvar */
+  P = dp_etov(L2);
+  Q=matrix_list_to_matrix(V)-P;
+  for (I=0; I<length(V); I++) {
+    if (Q[I] < 0) return 0; /* not P|v */
+  }
+  MM=v2mon(Dvar_all,vtol(Q));
+  if (base_subsetq(vars(dp_hc(L2)),Beta)) return MM;
+  return 0;
+}
+/* 2025.03.30 */
+def check_uv_contiguity(Cont,Dxu,Id,Xvar) {
+  if (Debug) {
+    printf("check_uv_contiguity(Cont,Dxu,Id,Xvar): Cont[1]*Dxu-Cont[0] = 0 mod Id?\n  Cont=%a,Dxu=%a,Id=%a,Xvar=%a\n",Cont,Dxu,Id,Xvar);
+  }
+  dp_ord(0);
+  Dvar=poly_dvar(Xvar);
+  yang.define_ring(["partial",Xvar]);
+  Id=map(dp_ptod,Id,Dvar);
+  G=yang.buchberger(Id);
+  F=poly_dmul(Cont[1],Dxu,Xvar)-Cont[0];
+  F=dp_ptod(F,Dvar);
+  F2=yang.reduction(F,G);
+  if (F2[0] != 0) {
+    printf("check_uv_contiguity fails.\n");
+    debug();
+  }else{
+    print("check_uv_contiguity: OK.\n");
+  }
+}
+/*
+ uv_contiguity returns 
+ [b*d^v, E] where E*d^u = b*d^v  modulo H_A(beta)
+*/
+def uv_contiguity(UV,A,Beta) {
+  if (Debug) {
+    printf("uv_contiguity(UV=%a,A,Beta)\nA=%a, Beta=%a\n",UV,A,Beta);
+  }
+  printf("Calling tk_uv_contiguity.\n"); return tk_uv_contiguity(UV,A,Beta | option_list=getopt()); //2026-08-15 for test.
+  DD=length(A); N=length(A[0]);
+  U=UV[0]; V=UV[1];
+  /* Beta はパラメータとして扱う */
+  W=newvect(2*N);
+  for (I=0; I<N; I++) {W[I]=1;W[I+N]=1;}
+  for (I=0; I<length(V); I++) {
+    if (V[I] != 0) W[I+N]=0;  /* V に出てくる dxi 以外は消す */
+  }
+  W=vtol(W);
+  print(W);
+  F=sm1.gkz([A,Beta]);
+  Xvar_all=F[1]; Dvar_all=poly_dvar(Xvar_all);
+  Mat7=poly_weight_to_ord_matrix(W);
+  Debug_Mat7=Mat7;
+  V7=Xvar_all;
+  DV7=poly_dvar(V7);
+  Dxu=v2mon(Dvar_all,U);
+  T_matrix=get_transformation_matrix(cons(Dxu,F[0]),append(V7,DV7),Mat7 | weyl=1);
+  Debug_T_matrix=T_matrix;
+  G7=T_matrix[0];
+  for (I=0; I<length(G7); I++) {
+    /* dx^v を割り切る形となってるか? M は dx^v にするためかける因子*/
+    if ((MM=bdv_form(G7[I],V,Dvar_all,vars(Beta))) != 0) {
+      Ans=[poly_dmul(MM,G7[I],Xvar_all),poly_dmul(MM,T_matrix[1][I][0],Xvar_all)];
+      check_uv_contiguity(Ans,Dxu,F[0],Xvar_all);
+      return append(Ans,Xvar_all);
+    }
+  }
+  /*
+    Example of fail: gauss_contiguity_by_GKZ([b,a,a],[b,a+1,a+2]); は fail
+                     gauss_contiguity_by_GKZ([b,a,c],[b,a+1,c+2]); は OK.
+  */
+  printf("Fails, contiguity could not be found by Saito method. (May be) not isomorphic.\n"); 
+  printf("Try get_transformation_matrix(%a,%a,%a | weyl=1);\n",cons(Dxu,F[0]),append(V7,DV7),matrix_matrix_to_list(Mat7));
+  printf("Fails, see, e.g., 2025-07-23-debug-conti.rr for example.\n");
+  //debug();
+  return 0;
+}
+
+/* compute GB of GG and reduce F by GG by sm1.
+   Parameters are not accepted.
+*/
+def sm1_true_nf(F,G,XL) {
+  Vstr=rtostr(XL);
+  Vstr=util_find_and_replace("[",Vstr,"");
+  Vstr=util_find_and_replace("]",Vstr,"");
+  //printf("Vstr=%a\n",Vstr);
+  Dvar=poly_dvar(XL);
+  W=newvect(2*length(Dvar));
+  for (I=0; I<length(Dvar); I++) {
+    W[2*I]=Dvar[I]; W[2*I+1]=1;
+  }
+  Gset=[G,Vstr,[vtol(W)]];
+  //printf("Gset=%a\n",Gset);
+  return sm1.gb_reduction_noh(F,Gset);
+}
+
+A=[[1,0,0,-1],
+   [0,1,0,1],
+   [0,0,1,1]];;
+
+/* 2024-08-20-bf.rr を参考に 
+ E dx1 = 1 dx2 dx3 となる E を探す
+ Mat7=poly_weight_to_ord_matrix([1,1,1,1,0,0,0,        1,0,0,1,0,0,0]);;
+ V7=[x1,x2,x3,x4,b1,b2,b3];;
+*/
+/*
+ [-dx2*dx3,-dx4] が出力
+  b*dx2*dx3, E,    E*dx1=b*dx2*dx3
+ [b*d^v, E] where E*d^u = b*d^v  modulo H_A(beta)
+
+ dx4 dx1 = dx2 dx3
+ したがって dx4 は dx1*(dx2*dx3)^(-1) の逆作用素.
+*/
+//T100=uv_contiguity([[0,1,1,0],[1,0,0,0]],A,[b1,b2,b3]);
+//// T101=uv_contiguity([[1,0,0,0],[0,1,1,0]],A,[b1,b2,b3]);
+/* For checking the result.
+T=Debug_T_matrix; T[0][0]-poly_dmul(T[1],T[2],[x1,x2,x3,x4]); // returns 0.
+*/
+/*
+TRule=[[b1,10],[b2,20],[b3,30]];;
+T101Edxu=base_replace(poly_dmul(T101[1],dx1,[x1,x2,x3,x4]),TRule);;
+T101z=base_replace(T101[0],TRule)-T101Edxu;;
+printf("Reduced to [0,?,?] ... ");;
+sm1_true_nf(T101z,base_replace(sm1.gkz([A,[b1,b2,b3]])[0],TRule),[x1,x2,x3,x4]);
+printf("Reduced to [dx1*dx4,?,?] ... ");;
+sm1_true_nf(T101Edxu,base_replace(sm1.gkz([A,[b1,b2,b3]])[0],TRule),[x1,x2,x3,x4]);
+*/
+/* dx2*dx3 に reduction されたので冗長な表現だったことがわかる */
+
+def shift_beta(Beta,UV,A) {
+  DD=length(Beta); NN=length(A[0]);
+  U=matrix_list_to_matrix(UV[0]); V=matrix_list_to_matrix(UV[1]);
+  Beta=matrix_list_to_matrix(Beta); 
+  A=matrix_list_to_matrix(A);
+  Beta_s = Beta-A*U; /* start */
+  Beta_t = Beta-A*V; /* terminal */
+  return [vtol(Beta_s),vtol(Beta_t)];
+}
+//shift_beta([b1,b2,b3],[[0,0,0,1],[0,0,0,0]],A);
+
+/*
+  ABC は gauss HG alpha,beta,gamma のリスト
+*/
+/* E dx^u = b dx^v, B_dxv   
+  E2_elim : E を x1=x2=x3=1 へ制限したもの.
+  Bf : b-function
+  ABC : gauss の alpha,beta,gamma
+  ABC_shift : shift した先.
+  It returns [E2_elim,Bf=red(B_dxv/v2mon(Dx,UV[1])),[ABC_s,ABC_t],[E,B_dxv,v2mon(Dx,UV[0]),v2mon(Dx,UV[1])]];
+*/
+def gauss_contiguity_by_GKZ0(UV,ABC) {
+  A=[[1,0,0,-1],
+     [0,1,0,1],
+     [0,0,1,1]];
+  Beta=[b1,b2,b3];
+  F0=sm1.gkz([A,Beta]);
+  XL=F0[1];
+  Dx=poly_dvar(XL);
+  if (type(getopt(beta2))>0) {
+    T=getopt(beta2);
+    Rule=[[b1,T[0]],[b2,T[1]],[b3,T[2]]];
+    F=base_replace(F0[0],Rule);
+    Beta2=base_replace(Beta,Rule);
+  }else{
+    Rule=[[b1,ABC[2]-1],[b2,-ABC[0]],[b3,-ABC[1]]];
+    F=base_replace(F0[0],Rule);
+    Beta2=base_replace(Beta,Rule);
+  }
+  Cont=uv_contiguity(UV,A,Beta2);
+  if (Cont==0) {
+    printf("Warning! No contiguity is found. Return 0\n");
+    return 0;
+  }
+  Beta2_shift=shift_beta(Beta2,UV,A);
+  printf("E dx^u - b dx^v is computed modulo H_A(Beta2)\n");
+  printf(" dx^u f(Beta2) = f(Beta2_shift[0]) and\n"); 
+  printf(" dx^v f(Beta2) = f(Beta2_shift[1]).\n"); 
+  if (Contiguity_verbose) printf("Cont=[b*dx^v,E,vars...]=%a;\n F=H_A(Beta2)=%a;\n Beta2=%a;\n Beta2_shift=%a;\n\n",Cont,F,Beta2,Beta2_shift);
+  ABC_shift_s=[-Beta2_shift[0][1],-Beta2_shift[0][2],Beta2_shift[0][0]+1];
+  ABC_shift_t=[-Beta2_shift[1][1],-Beta2_shift[1][2],Beta2_shift[1][0]+1];
+  B_dxv=Cont[0];
+  E=Cont[1];
+  E2=base_replace(E,at_one_rule(reverse(cdr(reverse(XL)))));
+  if (Debug) {
+    printf("Call lr_red(E=%a) by H_A(%a)\n",E2,Beta2_shift[0]);
+  }
+  Witness=newvect(length(A));
+  E2_elim=lr_red(E2,A,XL,Beta2_shift[0],Witness);
+  /* E dx^u = b dx^v   */
+  return [reduce_gauss(E2_elim,ABC_shift_s),Bf=red(B_dxv/v2mon(Dx,UV[1])),E2_elim,[ABC_shift_s,"->",ABC_shift_t],[E,B_dxv,v2mon(Dx,UV[0]),v2mon(Dx,UV[1])]];
+}
+def reduce_gauss(F,ABC) {
+  yang.define_ring(["partial",[x4]]);
+  dp_ord(0);
+  G=base_replace(x4*(1-x4)*dx4^2+(t_c-(t_a+t_b+1)*x4)*dx4-t_a*t_b,
+		     [[t_a,ABC[0]],[t_b,ABC[1]],[t_c,ABC[2]]]);
+  G2=dp_ptod(G,[dx4]);
+  F2=yang.reduction(dp_ptod(F,[dx4]),[G2]);
+  return dp_dtop(F2[0],[dx4])/F2[1];
+}
+
+//T200=gauss_contiguity_by_GKZ0([[1,0,0,0],[0,0,0,0]],[-1,-1,-1]);
+/* Gauss の a,b,c で与える.
+   u=e_1, v=0, [-1,-1,0] fails 
+   u=e_1, v=0, [-2,-2,0] works
+   u=e_1, v=e_2, [-1,-1,-1] works
+*/
+/*
+T201=gauss_contiguity_by_GKZ0([[1,0,0,0],[0,1,0,0]],[c-1,b,c]);
+T202=gauss_contiguity_by_GKZ0([[0,1,0,0],[1,0,0,0]],[c-1,b,c]);
+*/
+
+/* 2025.03.28 see my-note */
+def find_u_v_beta_gauss(ABCs,ABCt) {
+  Beta_s=newvect(3,[ABCs[2]-1,-ABCs[0],-ABCs[1]]);
+  Beta_t=newvect(3,[ABCt[2]-1,-ABCt[0],-ABCt[1]]);
+  W=Beta_t-Beta_s;
+  U=newvect(4);V=newvect(4);
+  for (I=0; I<length(W); I++) {
+    if (vars(W[I])!=[]) {
+      print("Error in ABC argument."); debug();
+    }
+    if (W[I]>0) U[I]=W[I];
+    if (W[I]<0) V[I]=-W[I];
+  }
+  A=[[1,0,0,-1],
+     [0,1,0,1],
+     [0,0,1,1]];
+  A=matrix_list_to_matrix(A);
+  Beta=Beta_s+A*U;
+  return [U,V,vtol(Beta)];
+}
+def my_base_replace(F,Rule) {
+  if (type(F)==4) {
+    return map(my_base_replace,F,Rule);
+  }
+  if (type(F)==7) { /* string */
+    return F;
+  }
+  return base_replace(F,Rule);
+}
+// find_u_v_beta_gauss([c,b,c],[c-1,b,c-1]);
+def gauss_contiguity_by_GKZ(ABCs,ABCt) {
+  T=find_u_v_beta_gauss(ABCs,ABCt);
+  Ans=gauss_contiguity_by_GKZ0([T[0],T[1]],0|beta2=T[2]);
+  Rule_X=[[x4,x],[dx4,dx]];
+  return my_base_replace(Ans,Rule_X);
+}
+//T202b=gauss_contiguity_by_GKZ([c,b,c],[c-1,b,c-1]);
+
+end;;

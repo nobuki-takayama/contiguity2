@@ -1,0 +1,343 @@
+/*
+ 2026.09.24.: contiguity/Horn/2026-02-28-chg-by-gkz.rr より.
+ 2026-02-13-F4-by-gkz.rr 相当を A から自動で作る.
+
+ tk_weyl_replace.weyl_power(Base, Exp, Xvars)
+*/
+
+/* llm-2025/Data/v5-codes/gkz-to-classical.rr
+   by gemini
+*/
+import("nk_toric.rr");;
+import("yang.rr");;
+
+module horn_contiguity2;
+localf print_unexpanded_subst$
+localf gkz_natural_params0$
+localf gkz_natural_params$
+localf show_classical_hg$
+localf test1$
+localf test2$
+localf test3$
+
+static H_debug;;
+
+// --- 補助関数: 自動展開を防ぎ、積の形を保ったまま代入結果を文字列として出力する ---
+def print_unexpanded_subst(Poly, Rules, Vlist) {
+  if (Poly == 0) {
+    printf("0\n");
+    return 0;
+  }
+    
+  Ord_orig = dp_ord();
+  dp_ord(0);
+    
+  Dpoly = dp_ptod(Poly, Vlist);
+  IsFirst = 1;
+    
+  // 分散多項式の各項をループで処理
+  while (Dpoly) {
+    C = dp_hc(Dpoly);
+    E = dp_etov(dp_ht(Dpoly));
+        
+    // 符号の出力
+    if (C > 0 && IsFirst == 0) {
+      printf(" + ");
+    } else if (C < 0) {
+      if (IsFirst == 0) {
+        printf(" - ");
+      } else {
+        printf("-");
+      }
+      C = -C;
+    }
+        
+    // 係数の出力
+    HasFactor = 0;
+    TotalDegree = 0;
+    for (I = 0; I < length(Vlist); I++) {
+      TotalDegree = TotalDegree + E[I];
+    }
+        
+    if (C != 1 || TotalDegree == 0) {
+      printf("%a", C);
+      HasFactor = 1;
+    }
+        
+    // 各変数の出力 (置換ルールがあれば括弧でくくる)
+    for (I = 0; I < length(Vlist); I++) {
+      if (E[I] > 0) {
+        if (HasFactor == 1) {
+          printf("*");
+        }
+                
+        Rep = Vlist[I];
+        Found = 0;
+        for (J = 0; J < length(Rules); J++) {
+          if (Rules[J][0] == Vlist[I]) {
+            Rep = Rules[J][1];
+            Found = 1;
+          }
+        }
+                
+        // 代入先がある場合は ( ) でラップし、展開を防ぐ
+        if (Found == 1) {
+          if (E[I] == 1) {
+            printf("(%a)", Rep);
+          } else {
+            printf("(%a)^%a", Rep, E[I]);
+          }
+        } else {
+          if (E[I] == 1) {
+            printf("%a", Rep);
+          } else {
+            printf("%a^%a", Rep, E[I]);
+          }
+        }
+        HasFactor = 1;
+      }
+    }
+        
+    IsFirst = 0;
+    Dpoly = dp_rest(Dpoly);
+  }
+  printf("\n");
+    
+  dp_ord(Ord_orig);
+  return 0;
+}
+
+// --- メイン関数: GKZパラメータの変換と制限系生成元の出力 ---
+def gkz_natural_params0(A_list, B_list, Xlist, DXlist, I_ideal) {
+  D = length(A_list);
+  N = length(A_list[0]);
+    
+  A1_mat = newmat(D, D);
+  for (I = 0; I < D; I++) {
+    for (J = 0; J < D; J++) {
+      A1_mat[I][J] = A_list[I][J];
+    }
+  }
+    
+  InvRes = invmat(A1_mat);
+  A1_inv = newmat(D, D);
+  Det = InvRes[1];
+  for (I = 0; I < D; I++) {
+    for (J = 0; J < D; J++) {
+      A1_inv[I][J] = InvRes[0][I][J] / Det;
+    }
+  }
+    
+  A_tilde = newmat(D, N);
+  for (I = 0; I < D; I++) {
+    for (J = 0; J < N; J++) {
+      Sum = 0;
+      for (K = 0; K < D; K++) {
+        Sum = Sum + A1_inv[I][K] * A_list[K][J];
+      }
+      A_tilde[I][J] = Sum;
+    }
+  }
+    
+  B_tilde = newvect(D);
+  for (I = 0; I < D; I++) {
+    Sum = 0;
+    for (K = 0; K < D; K++) {
+      Sum = Sum + A1_inv[I][K] * B_list[K];
+    }
+    B_tilde[I] = Sum;
+  }
+
+  if (H_debug) {    
+    printf("=== GKZ パラメータから制限系の自然なパラメータへの変換 ===\n");
+    printf("元のパラメータ b: %a\n", B_list);
+  }
+    
+  Rules = [];
+  for (I = 0; I < D; I++) {
+    SubstExpr = B_tilde[I];
+    for (J = D; J < N; J++) {
+      if (A_tilde[I][J] != 0) {
+        SubstExpr = SubstExpr - A_tilde[I][J] * Xlist[J] * DXlist[J];
+      }
+    }
+    Rules = cons([DXlist[I], SubstExpr], Rules);
+  }
+  RulesRev = reverse(Rules);
+
+  if (H_debug) {
+    printf("\n[x1=...=xd=1 制限時のオイラー代入ルール]\n");
+    for (I = 0; I < length(RulesRev); I++) {
+      printf("  %a  -->  %a\n", RulesRev[I][0], RulesRev[I][1]);
+    }
+    
+    printf("\n=== 制限系 (Lauricella/Appell等) の生成元 (展開なし) ===\n");
+    for (I = 0; I < length(I_ideal); I++) {
+      printf("Gen[%a] = ", I);
+      print_unexpanded_subst(I_ideal[I], RulesRev, append(Xlist, DXlist));
+    }
+  }
+  return [vtol(B_tilde), RulesRev,
+	  base_replace(I_ideal,assoc(Xlist,DXlist))];
+}
+
+/* usage: gkz_natural_params(A,B)
+  H_A(b) が入力
+  戻り値 は list
+  0: [[a1, b での表現],[a2, b での表現], ....]
+  1: [[dx1, Euler op],[dx2, Euler op], ...]
+  2: classical HG の独立変数.
+  3: 4 に対応する toric ideal の元.
+  4: [classical HG(文字列), classical HG(文字列), ....]
+  5: 2 を展開した classical HG の微分作用素のリスト.
+*/
+def gkz_natural_params(A,B) {
+  N=length(A[0]);
+  V=base_var_list(x,1,N);
+  ClassicalV=base_var_list(x,length(A)+1,N);
+  DV=poly_dvar(V);
+  Toric=nk_toric.toric_ideal(A);
+  T=gkz_natural_params0(A,B,V,DV,Toric);
+
+  Rule=T[1]; // [[dx1,euler op + const], ....]
+  Param=base_var_list(a,1,length(Rule));
+  // euler op の係数を positive にして定数部分を順次 ai に
+  R=[]; Vall=append(V,DV);
+  Zero=assoc(V,vtol(matrix_ones(length(V) | one=0)));
+  NewRule=[];
+  for (I=0; I<length(Rule); I++) {
+    Const=base_replace(Rule[I][1],Zero);
+    Right=Param[I];
+    Euler=Rule[I][1]-Const;
+    if (dp_hc(dp_ptod(Euler,Vall))<0) {
+      Const=-Const;
+      Right=-Right;
+    }
+    R=cons([Param[I],Const],R);
+    NewRule=cons([Rule[I][0],Euler+Right],NewRule);
+  }
+  R=reverse(R);NewRule=reverse(NewRule);
+  S=show_classical_hg(T[2],NewRule,V,DV);
+
+  return append([R,NewRule,ClassicalV,T[2]],S);
+}
+
+def show_classical_hg(Toric,Rule,V,DV) {
+  N=length(Rule); // かならず dx1, dx2, ... となってるはず.
+  Sall=[];  // 文字列で chg(classical HG)の式を入れていく.
+  S2all=[]; //  文字列で * 付き.
+  Lall=[];  // 展開した chg.
+
+  for (I=0; I<length(Toric); I++) {
+    T=Toric[I]; T=dp_ptod(T,DV);
+    S="";  L=0; S2="1";
+    while (T != 0) {
+      C=dp_hc(T); E=dp_etov(dp_ht(T)); 
+      if (C^2 != 1) error("toric?");
+      Op=1; // 展開したもの
+      /* かならず右から書き換えること */
+      for (J=length(E)-1; J>=0; J--) {
+	if (J>=N) {
+	  if (E[J]==1) {
+	    S += sprintf("%a",DV[J]);
+	    S2 += sprintf("*%a",DV[J]);
+	    Op = poly_dmul(Op,DV[J],V);
+	  }else if (E[J]>1) {
+	    S += sprintf("%a^%a",DV[J],E[J]);
+	    S2 += sprintf("*%a^%a",DV[J],E[J]);
+	    Op = poly_dmul(Op,DV[J]^E[J],V);
+	  }
+	}else if (E[J]>0) {
+	  if (Rule[J][0] != DV[J]) error("Not dx1, dx2, ...");
+	  if (E[J]==1) {
+	    S += sprintf("(%a)",Rule[J][1]);
+	    S2 += sprintf("*(%a)",Rule[J][1]);
+	    Op = poly_dmul(Op,Rule[J][1],V);
+	  } else {
+	    S += sprintf("(%a)^(%a)",Rule[J][1],E[J]);
+	    S2 += sprintf("*(%a)^(%a)",Rule[J][1],E[J]);
+	    Op = poly_dmul(Op,tk_weyl_replace.weyl_power(Rule[J][1], E[J],V),V);
+	  }
+	}
+      }
+      T=dp_rest(T);
+      if (T != 0) {
+	S += sprintf(" - ");
+	S2 += sprintf(" - 1");
+	L += Op;
+      }else{
+	L -= Op;
+      }
+    }
+    Sall = cons(S,Sall);
+    S2all = cons(S2,S2all);
+    Lall = cons(L,Lall);
+  }
+  return [reverse(Sall),reverse(Lall),reverse(S2all)];
+}
+
+def test1() {
+  Test_A = [
+	    [1, 1, 1, 1, 1, 1],
+	    [0, 1, 0, 0, 1, 1],
+	    [0, 0, 1, 0, 1, 0],
+	    [0, 0, 0, 1, 0, 1]
+	    ];;
+
+  // 4次元のパラメータ
+  Test_B = [b1, b2, b3, b4];;
+
+  // 6つの変数と微分作用素
+  Vars_X = [x1, x2, x3, x4, x5, x6];;
+  Vars_DX = poly_dvar(Vars_X);
+
+  // A行列のカーネルから導かれる正しい Appell F_1 のトーリックイデアル生成元
+  II=nk_toric.toric_ideal(Test_A);
+  Rule=assoc(Vars_X,Vars_DX);
+  
+  I_toric = base_replace(II,Rule);
+
+  // 実行
+  Ans = gkz_natural_params0(Test_A, Test_B, Vars_X, Vars_DX, I_toric);
+  return Ans;
+}
+//T=test1();
+def test2() {
+  print("F1 case");
+  T=gkz_natural_params([
+			[1, 1, 1, 1, 1, 1],
+			[0, 1, 0, 0, 1, 1],
+			[0, 0, 1, 0, 1, 0],
+			[0, 0, 0, 1, 0, 1]
+			],[b1,b2,b3,b4]);
+  print(T);
+  // yang で T[5] の GB を計算して確認. 変数は T[2]
+  yang.define_ring(["partial",T[2]]);;
+  F=map(dp_ptod,T[5],poly_dvar(T[2]));;
+  G=yang.buchberger(F);;
+  print(yang.stdmon(G));
+  return T;
+}
+// T=test2();
+def test3() {
+  // F4
+  print("F4 case");
+  T=gkz_natural_params([
+			[1, 1, 1, 1, 1, 1],
+			[1, 0, 0, -1, 0, 0],
+			[0, 1, 0, 0, -1, 0],
+			[0, 0, 1, 0, 0, -1]
+			],[b1,b2,b3,b4]);
+  print(T);
+  // yang で T[5] の GB を計算して確認. 変数は T[2]
+  yang.define_ring(["partial",T[2]]);;
+  F=map(dp_ptod,T[5],poly_dvar(T[2]));;
+  G=yang.buchberger(F);;
+  print(yang.stdmon(G));
+  return T;
+}
+//T=test3();
+endmodule;;
+
+end;;
+

@@ -1,0 +1,39 @@
+// 2025-07-07-F1-F2-by-gkz.rr より
+/* 2025.07.25 see goodnotes. 
+   Bf:   linear polynomial in V.
+   Para: parametrization by V.
+
+   Para 空間での Bf の表現を戻す. 符号は反転する可能性あり. 
+*/
+def linear_poly_coefficients_for_Sage(Bf,V,Para) {
+  printf("Calling linear_poly_coefficients_for_Sage(Bf=%a,V=%a,Para=%Para)\n",Bf,V,Para);
+  N=length(Para);
+  VP=base_var_list(y,1,N);
+  F=[];
+  for (I=0; I<N; I++) {
+    if (length(vars(Para[I]))!=0) { 
+      F=cons(VP[I]-Para[I],F);
+    }
+  }
+  G=nd_gr(F,append(V,VP),0,2);
+  printf("G=%a\n",G);
+  G2=[];
+  for (I=0; I<length(G); I++) {
+    if (length(base_intersection(vars(G[I]),V))!=0) {
+      G2=cons(G[I],G2);
+    }
+  }
+  F2=cons(Bf,G2);
+  G3=nd_gr(F2,append(V,VP),0,2);
+  if (length(base_intersection(vars(G3[0]),V)) != 0) error("not found.");
+  printf("G3=%a\n",G3);
+  return poly_coefficients_of_monomial_list(G3[0],append(VP,[1]));
+}
+/*
+linear_poly_coefficients_for_Sage(-b+bp,[a,b,bp,c],[a,-b+bp,b,bp+1]);
+linear_poly_coefficients_for_Sage(-b+bp+10,[a,b,bp,c],[a,-b+bp,b,bp+1]);
+linear_poly_coefficients_for_Sage(-b+bp,[a,b,bp,c],[a,c,b,bp]);
+linear_poly_coefficients_for_Sage(b-1,[a,b,bp,c],[a,b,a,2,a]);
+*/
+
+end;;

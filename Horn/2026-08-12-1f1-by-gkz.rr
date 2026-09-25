@@ -1,0 +1,319 @@
+/* 
+ c1f1_contiguity(Old,New); は c1f1_from_a_shift([a,c],[a+1,c]);  
+ c1f1_isom(Chi);
+*/
+
+import("2026-08-05-contiguity.rr");;
+//import("symeq_one_loop.rr");; // symeq_one_loop 専用の check_contiguity
+import("tk_weyl.rr");;  // called by check_contiguity only
+import("linear_poly.rr");;
+
+printf("\n2026-08-12-1f1-by-gkz.rr is loaded.\n");
+printf("Warning! Order for alg 4.2 is set to lex. It is experimental --> it is no longer used.\n");;
+printf("Warning! set_ord_42(0); should be executed for homogeneous case.\n\n");;
+set_ord_42(2);;
+
+/*  Todo, // を使うと ox_execute_string で syntax error. なぜ?
+// 2026.08.24.  Standard interface name.
+//Example: Chi=c1f1_get_chi([a,c],[a+1,c]); T1=c1f1_isom(Chi); T2=c1f1_contiguity([a+1,c],[a,c]);
+//         Chi=c1f1_get_chi([a,c],[a+1,c+1]); T1=c1f1_isom(Chi); T2=c1f1_contiguity([a+1,c+1],[a,c]);
+// x3,dx3, a, c
+*/
+def c1f1_contiguity(Old,New) { return c1f1_from_a_shift(Old,New);}
+def c1f1_get_chi(Old,New) {
+  Os1=-Old[0]; Os2=Old[1]-1; 
+  Ns1=-New[0]; Ns2=New[1]-1; 
+  Chi=[Ns1-Os1,Ns2-Os2];
+  return Chi;
+}
+def c1f1_isom(Chi_ac) { return [b_isom_1F1([-Chi_ac[0],Chi_ac[1]])]; }
+
+// 2026.08.27
+// return [b-ideal, Old->New contiguity str not restricted]
+def c1f1_b_ideal_sp(Old,New) {
+  /* Rule=[[s1,-a],[s2,c-1]]; */
+  A = [
+       [1, 0, 1],
+       [0, 1, -1]
+      ];
+  Amat=matrix_list_to_matrix(A);
+  Beta_start=param_to_beta1(Old);  // change here
+  Beta_target=param_to_beta1(New); // change here
+  Chi=vtol(ltov(Beta_target)-ltov(Beta_start));
+  UV=tk_chi_to_uv(A,Chi);
+  printf("UV=%a\n",UV);
+  Base_Beta=ltov(Beta_start)+Amat*ltov(UV[0]);
+  Base_Beta=vtol(Base_Beta);
+  T0=tk_uv_contiguity(UV,A,Base_Beta);
+  //printf("B ideal = %a\n",Tk_UV_B_ideal); // extern 宣言してない.
+  printf("T0=%a, tk_uv_contiguity(%a,%a,%a);\n",T0,UV,A,Base_Beta);
+  Dxv=tk_v_to_monomial(base_var_list(dx,1,length(A[0])),UV[1]); // これが必要.
+  B=red(T0[0]/Dxv);
+  return [[B],T0];
+}
+// return [b-ideal, Old->New contiguity str not restricted, New->Old contiguity str not restricted]
+def c1f1_isom_sp(Old,New) {
+  B1=c1f1_b_ideal_sp(Old,New); // change here
+  B2=c1f1_b_ideal_sp(New,Old); // change here
+  return [[B1[0][0]*B2[0][0]],B1[1],B2[1]];
+}
+
+/* 2026.08.24  2026-08-16-banana-quotient.rr よりコピー. */
+def b_ideal_1F1(Chi) {
+  /* Rule=[[s1,-a],[s2,c-1]]; */
+  A = [
+       [1, 0, 1],
+       [0, 1, -1]
+      ];
+  UV=tk_chi_to_uv(A,Chi);
+  printf("UV=%a\n",UV);
+  T0=tk_uv_contiguity(UV,A,base_var_list(s,1,2));
+  printf("B ideal = %a\n",Tk_UV_B_ideal);
+  Dxv=tk_v_to_monomial([dx1,dx2,dx3],UV[1]); // これが必要.
+  B=red(T0[0]/Dxv);
+  return B;
+}
+def b_isom_1F1(Chi_ac) {
+  Rule=[[s1,-a],[s2,c-1]];
+  // Chi_ac の方向を s1, s2 space に変更. 
+  Chi=[-Chi_ac[0],Chi_ac[1]];
+  B1=b_ideal_1F1(Chi);
+  printf("B1=%a (will be shifted by Chi=%a)\n",fctr(B1),Chi);
+  Chi_minus=[-Chi[0],-Chi[1]];
+  B2=b_ideal_1F1(Chi_minus);
+  printf("B2=%a\n",fctr(B2));
+  Rule_chi=[[s1,s1+Chi[0]],[s2,s2+Chi[1]]];
+  B=base_replace(B1,Rule_chi)*B2;
+  return base_replace(B,Rule);
+}
+
+/*
+//Ref:2026-08-03-banana-contiguity.goodnotes 08-12
+  dx3*(x3*dx3+beta2)+(x3*dx3-beta1)  
+*/
+def param_to_beta1(Param) {
+  [-Param[0],Param[1]-1];
+}
+def c1f1_from_a_shift(Param_start,Param_target) {
+  A = [
+       [1, 0, 1],
+       [0, 1, -1]
+      ];
+  A_mat=matrix_list_to_matrix(A);
+  H_A=A;
+
+  Beta_start = param_to_beta1(Param_start);
+  Beta_target= param_to_beta1(Param_target);
+  printf("Beta_start=%a\n",Beta_start);
+  printf("Beta_target=%a\n",Beta_target);
+  H_d=length(H_A); H_n=length(H_A[0]);
+
+  //------------------------------------ from 2026-03-01-horn-by-gkz.rr
+  Dbeta = newvect(H_d);
+  for (I = 0; I < H_d; I++) {
+    Dbeta[I] = Beta_target[I] - Beta_start[I];
+  }
+  /* --- 新規追加: 最短のシフトベクトル U, V を探索する --- */
+  Found_UV = 0;
+  Best_U = newvect(H_n);
+  Best_V = newvect(H_n);
+  /* 1. 長さ 1 のシフトを探索 ( U=e_j または V=e_j ) */
+  for (J = 0; J < H_n; J++) {
+    Col = newvect(H_d);
+    for (I = 0; I < H_d; I++) Col[I] = H_A[I][J];
+        
+    Diff1 = 0; Diff2 = 0;
+    for (I = 0; I < H_d; I++) {
+      if (Col[I] != Dbeta[I]) Diff1 = 1;
+      if (-Col[I] != Dbeta[I]) Diff2 = 1;
+    }
+    if (Diff1 == 0) { Best_U[J] = 1; Found_UV = 1; break; }
+    if (Diff2 == 0) { Best_V[J] = 1; Found_UV = 1; break; }
+  }
+    
+  /* 2. 見つからなければ、長さ 2 のシフトを探索 */
+  if (Found_UV == 0) {
+    for (J = 0; J < H_n; J++) {
+      for (K = 0; K < H_n; K++) {
+	ColJ = newvect(H_d); ColK = newvect(H_d);
+	for (I = 0; I < H_d; I++) { ColJ[I] = H_A[I][J]; ColK[I] = H_A[I][K]; }
+                
+	Diff1 = 0; Diff2 = 0; Diff3 = 0;
+	for (I = 0; I < H_d; I++) {
+	  if (ColJ[I] + ColK[I] != Dbeta[I]) Diff1 = 1;
+	  if (-ColJ[I] - ColK[I] != Dbeta[I]) Diff2 = 1;
+	  if (ColJ[I] - ColK[I] != Dbeta[I]) Diff3 = 1;
+	}
+	if (Diff1 == 0) { Best_U[J]++; Best_U[K]++; Found_UV = 1; break; }
+	if (Diff2 == 0) { Best_V[J]++; Best_V[K]++; Found_UV = 1; break; }
+	if (Diff3 == 0) { Best_U[J]++; Best_V[K]++; Found_UV = 1; break; }
+      }
+      if (Found_UV == 1) break;
+    }
+  }
+    
+  /* 3. それでもダメなら poly_solve_linear (フォールバック) */
+  if (H_no_short_uv) Found_UV=0;
+  if (Found_UV == 1) {
+    U = vtol(Best_U); V = vtol(Best_V);
+  } else {
+    W_vars = base_var_list(w, 1, H_n);
+    Eqs = [];
+    for (I = 0; I < H_d; I++) {
+      Eq = 0;
+      for (J = 0; J < H_n; J++) Eq = Eq + H_A[I][J] * W_vars[J];
+      Eqs = cons(Eq - Dbeta[I], Eqs);
+    }
+    Eqs = reverse(Eqs);
+    Ans = poly_solve_linear(Eqs, W_vars);
+    if (Ans == []) error("対応する GKZ のシフトベクトルが見つかりません。");
+        
+    Subst_rule = assoc(W_vars, vtol(newvect(length(W_vars))));
+    W_vals = [];
+    for (I = 0; I < length(W_vars); I++) {
+      Found = 0;
+      for (J = 0; J < length(Ans); J++) {
+	if (Ans[J][0] == W_vars[I]) {
+	  W_vals = cons(base_replace(Ans[J][1], Subst_rule), W_vals);
+	  Found = 1; break;
+	}
+      }
+      if (Found == 0) W_vals = cons(0, W_vals);
+    }
+    W_vals = reverse(W_vals);
+    U = []; V = [];
+    for (I = 0; I < length(W_vals); I++) {
+      if (W_vals[I] > 0) { U = cons(W_vals[I], U); V = cons(0, V); }
+      else { U = cons(0, U); V = cons(-W_vals[I], V); }
+    }
+    U = reverse(U); V = reverse(V);
+  }
+    
+  UV = [U, V];
+  printf("UV=%a\n",UV);
+  // ---------------------------------
+
+  /* 4. 以下既存の処理 */
+  Base_Beta = [];
+  for (I = 0; I < H_d; I++) {
+    Sum = 0;
+    for (J = 0; J < H_n; J++) Sum = Sum + H_A[I][J] * U[J];
+    Base_Beta = cons(Beta_start[I] + Sum, Base_Beta);
+  }
+  Base_Beta = reverse(Base_Beta);
+
+  XL = base_var_list(x,1,3); Dx = poly_dvar(XL); A = H_A;
+  Cont = uv_contiguity(UV, A, Base_Beta);
+  if (Cont==0) {
+    printf("Warning! No contiguity is found. Return 0.\n");
+    return 0;
+  }else{ }
+  B_dxv = Cont[0]; E = Cont[1];
+  printf("B_dxv=%a\n",fctr(B_dxv));
+    
+  Removed_var = base_set_minus(XL, [x3]);
+  E2 = base_replace(E, at_one_rule(Removed_var));
+  Witness = newvect(length(A));
+  E2_elim = lr_red(E2, A, XL, Beta_start, Witness);
+
+  printf("checking the result...\n");
+//  check_contiguity_1f1(E2_lim,Param_target,Param_start | prob=1);
+  check_contiguity_1f1(E2_elim,Param_target,Param_start);
+  printf("... Done\n");
+    
+  return [E2_elim, red(B_dxv/v2mon(Dx,UV[1])), [Param_start, " -> ", Param_target], [E, B_dxv, v2mon(Dx,UV[0]), v2mon(Dx,UV[1])],1];
+  // ------------------------------
+}
+
+
+def c1f1(Param) {
+  Beta=param_to_beta1(Param);
+  L=poly_dmul(dx3,x3*dx3+Beta[1],[x3])+(x3*dx3-Beta[0]);
+  return [L];
+}
+/*
+  1F1 用に banana_one_loop を 修正.
+  I(Left_param) E_final  \subseteq I(Right_param) ?
+*/
+
+def check_contiguity_1f1(E_final,Left_param,Right_param) {
+  if (type(getopt(prob))>0) {
+    if (getopt(prob)==2) Rule=[[a,13],[c,3]];
+    else Rule=[[a,random()%100],[c,random()%30]];
+    printf("Warning! using a probabilistic method by specializing params. Rule=%a\n",Rule);
+    E_final=base_replace(E_final,Rule);
+    Left_param=base_replace(Left_param,Rule);
+    Right_param=base_replace(Right_param,Rule);
+  }
+  V456=[x3];
+  Vd456=append(V456,poly_dvar(V456));
+  Den=dn(E_final);
+  if (length(base_intersection(vars(Den),V456)) > 0) {
+    error("check_contiguity: Denominator of E_final contains x4,x5,x6");
+  }
+  if (E_final==0) error("E_final==0");
+  E_final=nm(E_final);
+  // =========================================================
+  // 正当性の確認: 元の Beta のイデアルで検証
+  // =========================================================
+  printf("Verifying L * E_final mod Gb_rest (Beta) == 0 ...\n");
+  SymL=c1f1(Left_param);
+  SymR=c1f1(Right_param);
+  Gb_rest_base = nd_weyl_gr(SymR, Vd456, 0, 0);
+    
+  Check_ok = 1;
+  for (I = 0; I < length(SymL); I++) {
+    L_check = SymL[I];
+    Check_prod = poly_dmul(L_check, E_final, V456);
+    printf("L_check=%a, E_final=%a, Check_prod=%a, Gb_rest_base=%a\n",L_check,E_final, Check_prod, Gb_rest_base);
+    Rem = tk_p_weyl_true_nf(Check_prod, Gb_rest_base, Vd456, 0);
+    if (Rem[0] != 0) {
+      Check_ok = 0;
+      printf("Verification FAILED for generator index %a:\n%a\n", I, Rem[0]/Rem[1]);
+      if (Banana_debug >= 10) debug();
+    }
+  }
+    
+  if (Check_ok == 1) {
+    printf("Verification PASSED: All generators successfully reduced to 0.\n");
+  }
+}
+
+/*
+T0=c1f1_from_a_shift([a,c],[a+1,c]);  
+T0=c1f1_from_a_shift([a+1,c],[a,c]);    // 論文 +x でなく -x, x3 の符号を入れ替えてるので.
+T0=c1f1_from_a_shift([a,c],[a,c-1]);  
+T0=c1f1_from_a_shift([a,c-1],[a,c]);    // bf の一致は確認済み
+*/
+
+
+// test code on 2026.08.27
+/*
+contiguity_verbose(1);
+T0=c1f1_from_a_shift(Old=[a,c],New=[a,c-1]);  
+T1=c1f1_from_a_shift(New,Old);
+T3=c1f1_isom_sp(Old,New);;
+fctr(T0[1]*T1[1]);
+fctr(T3[0][0]);
+*/
+
+// test code, 退化した場合.
+/*
+contiguity_verbose(0);
+T0=c1f1_from_a_shift(Old=[a,a+1],New=[a+1,a+2]);  
+T1=c1f1_from_a_shift(New,Old);
+T3=c1f1_isom_sp(Old,New);;
+fctr(T0[1]*T1[1]);
+fctr(T3[0][0]);
+*/
+
+// test code, 退化その2.
+contiguity_verbose(0);
+T0=c1f1_from_a_shift(Old=[0,c],New=[0,c+1]);  
+T1=c1f1_from_a_shift(New,Old);
+T3=c1f1_isom_sp(Old,New);;
+fctr(T0[1]*T1[1]);
+fctr(T3[0][0]);
+
+
+end;;

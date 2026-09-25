@@ -1,0 +1,289 @@
+// 2026.08.07 E f(beta_start) = f(beta_target) なので I(beta_target) E \subset I(beta_start).  Ref: 2026-08-03-banana-contiguity.goodnotes 2026-08-16
+// 2026.08.08 に v1 完成. lr_reduction の bug fix.
+import("yang.rr");;
+extern Banana_debug;;
+Banana_debug=10;;
+def symeq_one_loop(Param) {
+  if (type(getopt(odd))>=0) Odd=getopt(odd);
+  else Odd=-1;
+  if (Odd==1) {
+    D=2*Param[0]+1; Nu1=Param[1]; Nu2=Param[2];
+  }else if (Odd==0) {
+    D=2*Param[0]; Nu1=Param[1]; Nu2=Param[2];
+  }else{
+    D=Param[0]; Nu1=Param[1]; Nu2=Param[2];
+  }
+    // 物理パラメータに基づく Beta の定義
+    B1 = D - Nu1 - Nu2 - 1;
+    B2 = Nu1 - D/2;
+    B3 = Nu2 - D/2;
+    B4 = D/2 - Nu1 - Nu2;
+    
+    V456 = [x4, x5, x6];
+    D456 = [dx4, dx5, dx6];
+    Vd456 = append(V456, D456);
+    
+    Th4 = x4*dx4;
+    Th5 = x5*dx5;
+    Th6 = x6*dx6;
+    
+    Vall=[x4,x5,x6];
+    Vdall=append(Vall,poly_dvar(Vall));
+    // ノートで与えられた制限イデアルの生成元
+    F1 = Th4 + Th5 + Th6 - B4;
+    F2 = poly_dmul(dx5,(Th5 + B2),Vall) - poly_dmul(dx6,(Th6 + B3),Vall);
+    F3 = poly_dmul(dx4,(Th4 + B1 - B4),Vall) - poly_dmul(dx5,(Th5 + B2),Vall);
+    A0 = dx5*dx6 + dx4*dx6 + dx4*dx5; 
+    return [F1,F2,F3,A0];;
+}
+
+/*
+  I(Left_param) E_final  \subseteq I(Right_param) ?
+*/
+def check_contiguity(E_final,Left_param,Right_param) {
+  if (nm(E_final)==0) error("E_final==0");
+  if (type(getopt(prob))>0) {
+    if (getopt(prob)==2) Rule=[[d,13],[nu1,3],[nu2,5],[dp,12]];
+    else Rule=[[d,random()%100],[nu1,random()%30],[nu2,random()%33],[dp,random()%100]];
+    printf("Warning! using a probabilistic method by specializing params. Rule=%a\n",Rule);
+    E_final=base_replace(E_final,Rule);
+    Left_param=base_replace(Left_param,Rule);
+    Right_param=base_replace(Right_param,Rule);
+  }
+  V456=[x4,x5,x6];
+  Vd456=append(V456,poly_dvar(V456));
+  Den=dn(E_final);
+  if (length(base_intersection(vars(Den),V456)) > 0) {
+    error("check_contiguity: Denominator of E_final contains x4,x5,x6");
+  }
+  E_final=nm(E_final);
+  if (E_final == 0) {
+    printf("Warning! E_final==0.\n");
+  }else{
+    printf("OK. E_final != 0.\n");
+  }
+  // =========================================================
+  // 正当性の確認: 元の Beta のイデアルで検証
+  // =========================================================
+  printf("Verifying L * E_final mod Gb_rest (Beta) == 0 ...\n");
+  SymL=symeq_one_loop(Left_param | option_list=getopt());
+  SymR=symeq_one_loop(Right_param | option_list=getopt());
+  Gb_rest_base = nd_weyl_gr(SymR, Vd456, 0, 0);
+  if (length(Gb_rest_base) < 2) printf("Warning! length(Gb_rest_base) < 2!\n");
+    
+  Check_ok = 1;
+  for (I = 0; I < length(SymL); I++) {
+    printf("%a ",I);
+    L_check = SymL[I];
+    Check_prod = poly_dmul(L_check, E_final, V456);
+    if (Check_prod==0) printf("Warning! Check_prod==0.\n");
+    Rem = tk_p_weyl_true_nf(Check_prod, Gb_rest_base, Vd456, 0);
+    if (Rem[0] != 0) {
+      Check_ok = 0;
+      printf("Verification FAILED for generator index %a:\n%a\n", I, Rem[0]/Rem[1]);
+      if (Banana_debug >= 10) debug();
+    }
+  }
+    
+  if (Check_ok == 1) {
+    printf("\nVerification PASSED: All generators successfully reduced to 0.\n");
+  }
+}
+
+def check1() {
+  check_contiguity(dx5,[d,nu1+1,nu2],[d,nu1,nu2]);
+}
+//check1();;  // OK.
+
+// 完全な LR-reduction   one-loop (n=2) 専用. 2026.08.06 16:19 追加
+// bug あり. cf. 2026-08-08,  対応の goodnotes と .md を見よ.
+def tk_lr_red_restriction_1_buggy(L, Rule_x, L_rule) {
+    local V, D, Vd, MayReducible, L1, C, E_vec, Term, Mon_rec, Ord_orig, L_new;
+    
+    Ord_orig = dp_ord();
+    dp_ord(0);
+    
+    V = [x1, x2, x3, x4, x5, x6];
+    D = [dx1, dx2, dx3, dx4, dx5, dx6];
+    Vd = append(V, D);
+    
+    MayReducible = 1;
+    while (MayReducible) {
+        MayReducible = 0;
+        L = base_replace(L, Rule_x);
+        L1 = dp_ptod(L, Vd);
+        L_new = 0;
+        
+        while (L1 != 0) {
+            C = dp_hc(L1);
+            E_vec = dp_etov(dp_ht(L1));
+            
+            if (E_vec[6] > 0) {
+                MayReducible = 1;
+                E_vec[6] = E_vec[6] - 1;
+                Mon_rec = dp_dtop(dp_vtoe(E_vec), Vd);
+                Term = poly_dmul(C * Mon_rec, L_rule[0], V);
+                L_new = L_new + Term;
+            } else if (E_vec[7] > 0) {
+                MayReducible = 1;
+                E_vec[7] = E_vec[7] - 1;
+                Mon_rec = dp_dtop(dp_vtoe(E_vec), Vd);
+                Term = poly_dmul(C * Mon_rec, L_rule[1], V);
+                L_new = L_new + Term;
+            } else if (E_vec[8] > 0) {
+                MayReducible = 1;
+                E_vec[8] = E_vec[8] - 1;
+                Mon_rec = dp_dtop(dp_vtoe(E_vec), Vd);
+                Term = poly_dmul(C * Mon_rec, L_rule[2], V);
+                L_new = L_new + Term;
+            } else {
+                Mon_rec = dp_dtop(dp_vtoe(E_vec), Vd);
+                L_new = L_new + C * Mon_rec;
+            }
+            L1 = dp_rest(L1);
+        }
+        L = L_new;
+    }
+    dp_ord(Ord_orig);
+    return L;
+}
+
+// 2026.08.07  
+def check_contiguity_in_rational_weyl_algebra(E_final,Left_param,Right_param) {
+
+  // probabilistic method
+  if (type(getopt(prob))>0) {
+    printf("Warning! using a probabilistic method by specializing params.\n");
+    Rule=[[d,13],[nu1,3],[nu2,5]];
+    E_final=base_replace(E_final,Rule);
+    Left_param=base_replace(Left_param,Rule);
+    Right_param=base_replace(Right_param,Rule);
+  }
+  
+
+  V456=[x4,x5,x6];
+  Vd456=append(V456,D456=poly_dvar(V456));
+  Den=dn(E_final);
+  if (length(base_intersection(vars(Den),V456)) > 0) {
+    error("check_contiguity: Denominator of E_final contains x4,x5,x6");
+  }
+  E_final=nm(E_final);
+  // =========================================================
+  // 正当性の確認: 元の Beta のイデアルで検証
+  // =========================================================
+  printf("Verifying L * E_final mod Gb_rest (Beta) == 0 in rational Weyl algebra\n");
+  SymL=symeq_one_loop(Left_param);
+  SymR=symeq_one_loop(Right_param);
+  yang.define_ring(["partial",V456]);
+  dp_ord(0);
+  Gb_rest_base = yang.buchberger(map(dp_ptod,SymR,D456));
+  //print(Gb_rest_base);
+    
+  Check_ok = 1;
+  for (I = 0; I < length(SymL); I++) {
+    L_check = SymL[I];
+    Check_prod = poly_dmul(L_check, E_final, V456);
+    Rem = yang.reduction(dp_ptod(Check_prod,D456), Gb_rest_base);
+    if (Rem[0] != 0) {
+      Check_ok = 0;
+      printf("Verification FAILED for generator index %a:\nRem=%a", I,Rem);
+      if (Banana_debug >=10) debug();
+    }
+  }
+    
+  if (Check_ok == 1) {
+    printf("Verification PASSED: All generators successfully reduced to 0.\n");
+  }
+}
+
+//check_contiguity_in_rational_weyl_algebra(dx5,[d,nu1+1,nu2],[d,nu1,nu2]);
+
+// 2026.08.08
+/*
+  修正版: 1-loop banana 用手動 LR reduction
+  Weyl 代数の交換関係 ( -x_i*dx_i 由来 ) を厳密に処理する
+*/
+
+// 完全な LR-reduction (修正版)
+def tk_lr_red_restriction_1(L, Rule_x, L_rule) {
+    local V, D, Vd, MayReducible, L1, C, E_vec, Term, Mon_rec, Ord_orig, L_new;
+    
+    Ord_orig = dp_ord();
+    dp_ord(0);
+    
+    // poly_dmul に渡す空間変数のリスト
+    V = [x1, x2, x3, x4, x5, x6];
+    D = [dx1, dx2, dx3, dx4, dx5, dx6];
+    Vd = append(V, D);
+    
+    MayReducible = 1;
+    // 最初の置換 (x1,x2,x3 に 1 を代入し、b1等を Beta に置換)
+    L = base_replace(L, Rule_x);
+    
+    while (MayReducible) {
+        MayReducible = 0;
+        L1 = dp_ptod(L, Vd);
+        L_new = 0;
+        
+        while (L1 != 0) {
+            C = dp_hc(L1);
+            E_vec = dp_etov(dp_ht(L1));
+            
+            if (E_vec[6] > 0) { // dx1 を右から1つ消去
+                MayReducible = 1;
+                E_vec[6] = E_vec[6] - 1;
+                Mon_rec = dp_dtop(dp_vtoe(E_vec), Vd);
+                // Weyl 代数での積を展開 (-x1*dx1 などが含まれる)
+                Term = poly_dmul(C * Mon_rec, L_rule[0], V);
+                // 展開後、ただちに x1=0, x2=0, x3=0 に制限する
+                Term = base_replace(Term, [[x1, 0], [x2, 0], [x3, 0]]);
+                L_new = L_new + Term;
+            } else if (E_vec[7] > 0) { // dx2 を右から1つ消去
+                MayReducible = 1;
+                E_vec[7] = E_vec[7] - 1;
+                Mon_rec = dp_dtop(dp_vtoe(E_vec), Vd);
+                Term = poly_dmul(C * Mon_rec, L_rule[1], V);
+                Term = base_replace(Term, [[x1, 0], [x2, 0], [x3, 0]]);
+                L_new = L_new + Term;
+            } else if (E_vec[8] > 0) { // dx3 を右から1つ消去
+                MayReducible = 1;
+                E_vec[8] = E_vec[8] - 1;
+                Mon_rec = dp_dtop(dp_vtoe(E_vec), Vd);
+                Term = poly_dmul(C * Mon_rec, L_rule[2], V);
+                Term = base_replace(Term, [[x1, 0], [x2, 0], [x3, 0]]);
+                L_new = L_new + Term;
+            } else {
+                // dx1, dx2, dx3 を含まない項はそのまま足す
+                Mon_rec = dp_dtop(dp_vtoe(E_vec), Vd);
+                L_new = L_new + C * Mon_rec;
+            }
+            L1 = dp_rest(L1);
+        }
+        L = L_new;
+    }
+    dp_ord(Ord_orig);
+    return L;
+}
+
+// -------------------------------------------------------------
+// 【呼び出し側の修正】 L_rule に -x_i*dx_i を明示的に追加する
+// -------------------------------------------------------------
+def tk_example_caller(Beta_start, E_orig) {
+    local Rule_x, L_rule, E_lr;
+
+    Rule_x = [[x1, 1], [x2, 1], [x3, 1], [b1, Beta_start[0]], [b2, Beta_start[1]], [b3, Beta_start[2]]];
+    
+    // 修正箇所: 各ルールに元の x_i*dx_i を組み込んでおく
+    L_rule = [
+        Beta_start[0] - x1*dx1 - x5*dx5 - x6*dx6, 
+        Beta_start[1] - x2*dx2 + x5*dx5,
+        Beta_start[2] - x3*dx3 + x6*dx6
+    ];
+
+    E_lr = tk_lr_red_restriction(E_orig, Rule_x, L_rule);
+    
+    return E_lr;
+}
+
+
+end;;
