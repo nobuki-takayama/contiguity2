@@ -289,13 +289,13 @@ plot_arrangement_faces_3d(data_merged[0],-4,4,-4,4,-4,4)
 * <2026-08-28-f0134.rr>
 
 ## サンプル入力
-* <2026-09-25-isom-horn.py>  一般の A
-* <2026-09-08-isom-banana1-no-d.py>
-* <2026-09-08-isom-f0134.py>
-* <2026-09-09-isom-c1f1.py>
+* [2026-09-25-isom-horn.py](2026-09-25-isom-horn.py)  一般の A
+* [2026-09-08-isom-banana1-no-d.py](2026-09-08-isom-banana1-no-d.py)
+* [2026-09-08-isom-f0134.py](2026-09-08-isom-f0134.py)
+* [2026-09-09-isom-c1f1.py](2026-09-09-isom-c1f1.py)
  
 
 ## 7. 参考文献
 * <https://github.com/nobuki-takayama/contiguity> : ver 1.
 * <https://arxiv.org/abs/2510.05104> : Algorithm についての論文
-* <man-chamber-lattice-utils.md> : chamber_lattice_utils.py のマニュアル
+* [man-chamber-lattice-utils.md](man-chamber-lattice-utils.md) : chamber_lattice_utils.py のマニュアル
