@@ -1216,7 +1216,7 @@ from sage.all import matrix, QQ, VectorSpace, vector
 
 def is_affine_space_included_in_arrangement(W, L, Eq):
     """
-    L に制限されたアフィン空間 W (\cap L) が、L 上の超平面配置 Eq (の和集合) に
+    L に制限されたアフィン空間 W (cap L) が、L 上の超平面配置 Eq (の和集合) に
     完全に含まれているかを判定する。
     
     入力:
@@ -1268,7 +1268,7 @@ def is_affine_space_included_in_arrangement(W, L, Eq):
 
 def get_new_hypersurfaces(W, L, Eq):
     """
-    W \cap L が Eq on L に含まれない場合、Eq に加えるべき W の超平面のリスト WW を返す。
+    W cap L が Eq on L に含まれない場合、Eq に加えるべき W の超平面のリスト WW を返す。
     L 上での線形独立性を考慮し、冗長な式を省いた「小さい集合」を抽出する。
     """
     WW = []
