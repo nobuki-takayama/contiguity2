@@ -1,3 +1,4 @@
+<!--Edit rest-compreheneisve5/Data/readme_get_isom_class.md Do not edit README.md -->
 
 
 # Horn型超幾何系 同型分類パッケージ マニュアル Ver 2.
@@ -186,8 +187,10 @@ Risa/Asir の計算エンジンを SageMath から透過的に呼び出し、数
 ### `show_globals()`
 
 * **概要:** 現在セットされている Horn 型超幾何方程式の定義方程式の情報を文字列で表示.
+* Horn 系のパラメータは a1, a2, ... GKZ 系の パラメータは b1,b2,b3, ... これらの変換ルールも表示される. a1, a2, ... は Horn 系としてより自然なパラメータが自動選択されてるので注意.
 
-<!--
+
+<!-- todo
 ### `get_horn_system(ring, dic)`
 
 * **概要:** 現在セットされている Horn 型超幾何方程式の定義方程式を取得します。
@@ -246,7 +249,7 @@ R2 = PolynomialRing(QQ,'x4,dx4,a1,a2,a3')
 dic2 = R2.gens_dict()
 a1,a2,a3 = dic2['a1'], dic2['a2'], dic2['a3']
 set_constant_part_of_param_vector(0)
-set_A([[1,0,0,-1],[0,1,0,1],[0,0,1,1]])  # A matrix
+set_A([[1,0,0,-1],[0,1,0,1],[0,0,1,1]])  # A matrix for Gauss 2F1.
 print(show_globals())
 data=representatives_of_arrangement([],hg='horn_contiguity2.horn',ring=R2,dic=dic2,param=[a1,a2,a3])
 isom_class_simplified=list(map(simplify_face,data[0]))
