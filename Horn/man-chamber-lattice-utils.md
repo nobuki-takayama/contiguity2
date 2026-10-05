@@ -118,10 +118,11 @@ bases, shifts = find_chamber_bases_and_shifts(ieqs_chamber)
 
 ```
 
-### 3.6. 描画機能 (2D / 3D)
+### 3.6. 描画機能 (2D / 3D / 1D)
 
 **`plot_arrangement_faces(faces, xmin, xmax, ymin, ymax)`**
 **`plot_arrangement_faces_3d(faces, xmin, xmax, ymin, ymax, zmin, zmax)`**
+**`plot_arrangement_faces_1d(faces, xmin, xmax)`**
 
 * **概要:** Face のリストと格子点を指定された描画範囲のバウンディングボックスで切り取り、次元ごとに異なるスタイル（透明度、太さなど）で図示します。
 

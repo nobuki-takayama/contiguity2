@@ -19,6 +19,8 @@ from sage.modules.free_module_element import vector
 from sage.plot.graphics import Graphics
 from sage.plot.point import point
 #
+from sage.all import line
+#
 import itertools
 import math
 
@@ -1318,3 +1320,61 @@ def get_new_hypersurfaces(W, L, Eq):
             
     return WW
 
+# 2026.10.05
+
+def plot_arrangement_faces_1d(faces, xmin=-5, xmax=5):
+    """
+    1次元の arrangement の face リストを数直線上にプロットする。
+    
+    入力:
+        faces: [dim, ieqs] のリスト。
+               ieqs は [c0, c1] (c0 + c1*s >= 0 を意味する) のリスト。
+        xmin, xmax: 描画する x 軸の範囲 (無限半直線をカットするため)
+    出力:
+        SageMath Graphics オブジェクト
+    """
+    G = Graphics()
+    colors = ['blue', 'green', 'orange', 'purple', 'cyan', 'magenta']
+    color_idx = 0
+    
+    # 描画範囲を制限するためのバウンディングボックス (xmin <= x <= xmax)
+    # 不等式表現: x - xmin >= 0 -> [-xmin, 1], -x + xmax >= 0 -> [xmax, -1]
+    bbox = Polyhedron(ieqs=[[-xmin, 1], [xmax, -1]])
+    
+    # 基準となる数直線 (黒の細線)
+    G += line([(xmin, 0), (xmax, 0)], color='black', thickness=1)
+    
+    for face in faces:
+        if len(face) != 2:
+            continue
+        dim, ieqs = face
+        
+        try:
+            # Face の条件から Polyhedron を作成し、描画範囲でカット
+            P = Polyhedron(ieqs=ieqs)
+            P_bound = P.intersection(bbox)
+            
+            if P_bound.is_empty():
+                continue
+                
+            if dim == 1:
+                # 1次元 Face (チャンバー): 太い半透明のカラー線分
+                verts = [v[0] for v in P_bound.vertices()]
+                if len(verts) == 2:
+                    G += line([(verts[0], 0), (verts[1], 0)], 
+                              color=colors[color_idx % len(colors)], 
+                              thickness=8, alpha=0.5)
+                    color_idx += 1
+            elif dim == 0:
+                # 0次元 Face (壁・境界): 赤いドット
+                verts = [v[0] for v in P_bound.vertices()]
+                if verts:
+                    G += point((verts[0], 0), color='red', size=50, zorder=5)
+        except Exception as e:
+            print(f"Warning: Failed to plot face {face}: {e}")
+            
+    # 整数格子点のプロット (黒の小さなドット)
+    for i in range(math.ceil(xmin), math.floor(xmax) + 1):
+        G += point((i, 0), color='black', size=15, zorder=10)
+        
+    return G
